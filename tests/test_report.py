@@ -40,6 +40,8 @@ def test_access_matrix_shows_group_and_direct_app_access(tmp_path):
     assert rows["lee.chen@acme.example"]["mfa"] == "none"
     assert rows["omar.haddad@acme.example"]["last_login"] == "never"
     assert rows["lee.chen@acme.example"]["decision"] == ""
+    assert rows["priya.shah@acme.example"]["admin_roles"] == "Super Administrator"
+    assert rows["lee.chen@acme.example"]["admin_roles"] == ""
 
 
 def test_saved_snapshot_round_trips(tmp_path):
@@ -55,6 +57,27 @@ def test_report_lists_controls_and_findings(tmp_path):
     assert "### AR-01 · Terminated in HR but account still live" in md
     assert "SOC 2 CC6.2" in md
     assert "`marcus.lee@acme.example`" in md
+
+
+def test_complete_review_has_no_gaps_section(tmp_path):
+    main(DEMO_ARGS + ["--out", str(tmp_path)])
+    d = run_dir(tmp_path)
+    assert "Data gaps" not in (d / "report.md").read_text()
+    assert json.loads((d / "manifest.json").read_text())["complete"] is True
+
+
+def test_data_gaps_are_reported(tmp_path):
+    snap = json.loads((FIXTURES / "demo_snapshot.json").read_text())
+    snap["gaps"] = ["Could not read admin role assignments; AR-10 and AR-11 may be incomplete."]
+    path = tmp_path / "snap.json"
+    path.write_text(json.dumps(snap))
+    out = tmp_path / "out"
+    main(["--snapshot", str(path), "--as-of", "2026-09-15", "--out", str(out)])
+    d = run_dir(out)
+    assert "## ⚠️ Data gaps" in (d / "report.md").read_text()
+    manifest = json.loads((d / "manifest.json").read_text())
+    assert manifest["complete"] is False
+    assert manifest["data_gaps"] == snap["gaps"]
 
 
 def test_fail_on_sets_exit_code(tmp_path):

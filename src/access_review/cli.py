@@ -16,7 +16,7 @@ from .report import write_report
 from .roster import load_roster
 
 REQUIRED_ENV = ["OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_KEY_ID", "OKTA_PRIVATE_KEY"]
-DEFAULT_SCOPES = "okta.users.read okta.groups.read okta.apps.read"
+DEFAULT_SCOPES = "okta.users.read okta.groups.read okta.apps.read okta.appGrants.read okta.roles.read"
 
 
 def _client_from_env() -> OktaClient:
@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n{len(findings)} findings. Report: {run_dir / 'report.md'}")
     if skipped:
         print(f"Skipped without a roster: {', '.join(skipped)}")
+    if snapshot.gaps:
+        print(f"INCOMPLETE: {len(snapshot.gaps)} data gap(s); see the report.")
 
     if args.fail_on:
         limit = SEVERITIES.index(args.fail_on)

@@ -17,7 +17,7 @@ from .models import Snapshot
 
 MATRIX_COLUMNS = [
     "login", "name", "status", "type", "department", "manager", "last_login",
-    "mfa", "groups", "apps", "decision", "reviewer", "reviewed_on", "notes",
+    "mfa", "admin_roles", "groups", "apps", "decision", "reviewer", "reviewed_on", "notes",
 ]
 
 
@@ -36,6 +36,7 @@ def access_matrix(snapshot: Snapshot) -> list[dict]:
             "manager": u.manager,
             "last_login": u.last_login.date().isoformat() if u.last_login else "never",
             "mfa": mfa,
+            "admin_roles": "unknown" if u.admin_roles is None else "; ".join(u.admin_roles),
             "groups": "; ".join(groups),
             "apps": "; ".join(apps),
             # Filled in by the reviewer: keep | revoke | modify
@@ -65,6 +66,9 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
     lines += [f"| {s} | {counts.get(s, 0)} |" for s in SEVERITIES]
     if skipped:
         lines += ["", f"Skipped (no HR roster provided): {', '.join(skipped)}"]
+    if snapshot.gaps:
+        lines += ["", "## ⚠️ Data gaps", "", "This review is incomplete. Fix these before relying on it:", ""]
+        lines += [f"- {g}" for g in snapshot.gaps]
 
     lines += ["", "## Findings", ""]
     if not findings:
@@ -144,6 +148,8 @@ def write_report(
         "config": asdict(config),
         "finding_counts": dict(Counter(f.severity for f in findings)),
         "skipped_checks": skipped,
+        "complete": not snapshot.gaps,
+        "data_gaps": snapshot.gaps,
         "files": {
             p.name: hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(run_dir.iterdir())

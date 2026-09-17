@@ -37,6 +37,8 @@ class User:
     profile: dict = field(default_factory=dict)
     # Enrolled factor types. None means unknown (not collected or not allowed).
     factors: list[str] | None = None
+    # Admin role labels assigned directly to the user. None means unknown.
+    admin_roles: list[str] | None = None
 
     @property
     def email(self) -> str:
@@ -68,6 +70,7 @@ class User:
             last_login=parse_time(d.get("lastLogin")),
             profile=d.get("profile", {}),
             factors=d.get("factors"),
+            admin_roles=d.get("adminRoles"),
         )
 
     def to_dict(self) -> dict:
@@ -79,6 +82,7 @@ class User:
             "lastLogin": format_time(self.last_login),
             "profile": self.profile,
             "factors": self.factors,
+            "adminRoles": self.admin_roles,
         }
 
 
@@ -106,6 +110,10 @@ class App:
     users: set[str] = field(default_factory=set)  # directly assigned user IDs
     groups: set[str] = field(default_factory=set)  # assigned group IDs
     granted_scopes: list[str] = field(default_factory=list)  # Okta API scopes granted to the app
+    admin_roles: list[str] = field(default_factory=list)  # admin roles assigned to the app's client
+    # True for OAuth clients that act on their own authority (client_credentials),
+    # as opposed to apps that act for a signed-in user.
+    service_client: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> App:
@@ -117,6 +125,8 @@ class App:
             users=set(d.get("users", [])),
             groups=set(d.get("groups", [])),
             granted_scopes=list(d.get("grantedScopes", [])),
+            admin_roles=list(d.get("adminRoles", [])),
+            service_client=d.get("serviceClient", False),
         )
 
     def to_dict(self) -> dict:
@@ -128,6 +138,8 @@ class App:
             "users": sorted(self.users),
             "groups": sorted(self.groups),
             "grantedScopes": sorted(self.granted_scopes),
+            "adminRoles": sorted(self.admin_roles),
+            "serviceClient": self.service_client,
         }
 
 
@@ -138,6 +150,8 @@ class Snapshot:
     users: list[User]
     groups: list[Group]
     apps: list[App]
+    # Data the collector could not read, so the report can say what is incomplete.
+    gaps: list[str] = field(default_factory=list)
 
     def groups_for(self, user_id: str) -> list[Group]:
         return [g for g in self.groups if user_id in g.members]
@@ -161,6 +175,7 @@ class Snapshot:
             users=[User.from_dict(u) for u in d["users"]],
             groups=[Group.from_dict(g) for g in d["groups"]],
             apps=[App.from_dict(a) for a in d["apps"]],
+            gaps=list(d.get("gaps", [])),
         )
 
     def to_dict(self) -> dict:
@@ -170,4 +185,5 @@ class Snapshot:
             "users": [u.to_dict() for u in self.users],
             "groups": [g.to_dict() for g in self.groups],
             "apps": [a.to_dict() for a in self.apps],
+            "gaps": self.gaps,
         }

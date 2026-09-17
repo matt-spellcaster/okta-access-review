@@ -16,6 +16,15 @@ from .models import DISABLED_STATUSES, LIVE_STATUSES, SIGN_IN_STATUSES, Snapshot
 from .roster import RosterEntry
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
+# Built-in roles that can view but not change anything.
+READ_ONLY_ROLES = {"read-only administrator"}
+# The full list is in snapshot.json; the finding shows the most important ones.
+MAX_SCOPES_SHOWN = 5
+HIGH_RISK_SCOPES = [
+    "okta.roles.manage", "okta.apiTokens.manage", "okta.clients.manage", "okta.apps.manage",
+    "okta.appGrants.manage", "okta.policies.manage", "okta.authenticators.manage",
+    "okta.users.manage", "okta.groups.manage",
+]
 
 
 @dataclass
@@ -194,23 +203,41 @@ def _disabled_with_access(ctx: ReviewContext, check: Check) -> list[Finding]:
 def _privileged_service_app(ctx: ReviewContext, check: Check) -> list[Finding]:
     out = []
     for app in ctx.snapshot.apps:
-        manage = [s for s in app.granted_scopes if s.endswith(".manage")]
-        if app.status == "ACTIVE" and manage:
-            out.append(check.finding(app.label, f"API client can change Okta data. Write scopes: {', '.join(manage)}."))
+        if app.status != "ACTIVE" or not app.service_client:
+            continue
+        manage = sorted(
+            (s for s in app.granted_scopes if s.endswith(".manage")),
+            key=lambda s: (HIGH_RISK_SCOPES.index(s) if s in HIGH_RISK_SCOPES else len(HIGH_RISK_SCOPES), s),
+        )
+        roles = [r for r in app.admin_roles if r.lower() not in READ_ONLY_ROLES]
+        if not (manage or roles):
+            continue
+        parts = []
+        if roles:
+            parts.append(f"admin roles: {', '.join(roles)}")
+        if manage:
+            shown = ", ".join(manage[:MAX_SCOPES_SHOWN])
+            more = f" and {len(manage) - MAX_SCOPES_SHOWN} more" if len(manage) > MAX_SCOPES_SHOWN else ""
+            parts.append(f"{len(manage)} write scopes: {shown}{more}")
+        severity = "high" if "Super Administrator" in app.admin_roles else None
+        out.append(check.finding(app.label, f"API client has {'; '.join(parts)}.", severity=severity))
     return out
 
 
 def _admin_membership(ctx: ReviewContext, check: Check) -> list[Finding]:
     admin_groups = {n.lower() for n in ctx.config.admin_groups}
-    users = {u.id: u for u in ctx.snapshot.users}
     out = []
-    for g in ctx.snapshot.groups:
-        if g.name.lower() not in admin_groups:
+    for u in ctx.snapshot.users:
+        if u.status == "DEPROVISIONED":
             continue
-        for uid in sorted(g.members):
-            u = users.get(uid)
-            label = u.login if u else uid
-            out.append(check.finding(label, f"Member of admin group '{g.name}'. Confirm this is still needed."))
+        reasons = []
+        if u.admin_roles:
+            reasons.append(f"admin roles: {', '.join(u.admin_roles)}")
+        groups = [g.name for g in ctx.snapshot.groups_for(u.id) if g.name.lower() in admin_groups]
+        if groups:
+            reasons.append(f"admin groups: {', '.join(groups)}")
+        if reasons:
+            out.append(check.finding(u.login, f"Has {'; '.join(reasons)}. Confirm this is still needed."))
     return out
 
 
@@ -270,13 +297,13 @@ CHECKS: list[Check] = [
         _disabled_with_access,
     ),
     Check(
-        "AR-10", "API client with write scopes", "medium",
+        "AR-10", "API client with admin access", "medium",
         ["SOC 2 CC6.3", "ISO 27001 A.8.2"],
-        "Confirm each .manage scope is needed and the app's admin role is least-privilege.",
+        "Confirm each .manage scope and admin role is needed; prefer a least-privilege custom role.",
         _privileged_service_app,
     ),
     Check(
-        "AR-11", "Admin group member", "info",
+        "AR-11", "Admin user", "info",
         ["SOC 2 CC6.3", "ISO 27001 A.8.2"],
         "Reviewer confirms each admin still needs the role.",
         _admin_membership,

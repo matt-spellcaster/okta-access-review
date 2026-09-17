@@ -33,8 +33,8 @@ The demo uses a fictional company with one planted issue for each check.
 | AR-07 | Contractor in an employee-only group | medium | SOC 2 CC6.3 · ISO A.5.15 |
 | AR-08 | Missing manager or department | low | SOC 2 CC6.2 · ISO A.5.16 |
 | AR-09 | Suspended or deprovisioned but still in groups or apps | medium | SOC 2 CC6.2 · ISO A.5.18 |
-| AR-10 | API client granted `.manage` scopes | medium | SOC 2 CC6.3 · ISO A.8.2 |
-| AR-11 | Admin group member (for confirmation) | info | SOC 2 CC6.3 · ISO A.8.2 |
+| AR-10 | Service app (client credentials) with `.manage` scopes or a non-read-only admin role (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
+| AR-11 | User with an admin role or in an admin group (for confirmation) | info | SOC 2 CC6.3 · ISO A.8.2 |
 
 AR-01 to AR-03 need `--roster`. Without it they're skipped, and the report says so. Thresholds and
 group names are set in a JSON config file (see `fixtures/demo_config.json`).
@@ -59,9 +59,27 @@ or worse, so it can gate a scheduled job or CI pipeline.
 This follows the same model as [okta-mcp-local](../okta-mcp-local): assume the laptop or repo
 could leak, and limit what a leak could do.
 
-- **Read-only in three places.** The Okta app is granted only `.read` scopes and the built-in
-  Read-Only Administrator role. The CLI refuses to request any scope that doesn't end in `.read`.
-  The client's only non-GET request is the token request, and a test enforces this.
+- **Read-only enforced by scopes.** Okta allows an API call only if the token's scopes **and**
+  the app's admin role both permit it. The app is granted only `.read` scopes, the CLI refuses to
+  request any other scope, and the client's only non-GET request is the token request (a test
+  enforces this).
+- **Why the app has Super Administrator (a deliberate tradeoff).** Tested on a dev org:
+
+  | Admin role | Sees API service apps | Reads app scope grants | Reads admin role assignments |
+  |---|---|---|---|
+  | Read-Only Administrator | yes | no | no |
+  | Organization Administrator | no (app list is empty) | n/a | no |
+  | Super Administrator | yes | yes | yes |
+
+  Reviewing admin access (AR-10, AR-11) is a core SOC 2 access control and needs all three, so
+  the app uses Super Administrator. Because its scopes are read-only, the role only widens what it
+  can *read*. The remaining risk is that someone grants the app a `.manage` scope later. That
+  would make it a full admin, so AR-10 flags the review app itself on every run for the
+  reviewer to confirm. If you'd rather use Read-Only Administrator, the tool still runs and marks
+  the review incomplete.
+- **Reports say when they're incomplete.** If the admin role hides data, the review still runs,
+  but the report lists each gap under "Data gaps" and `manifest.json` records `"complete": false`.
+  The tool checks that it can see its own app, which catches a role that silently hides the app list.
 - **No shared secret.** Private Key JWT client authentication. The key lives in 1Password and
   `run.sh` fetches it with `op read` each run. It is never written to disk.
 - **Tokens bound to the run (DPoP).** Each run generates a P-256 key in memory. Okta binds the
@@ -82,8 +100,18 @@ could leak, and limit what a leak could do.
 2. On the app:
    - **Client authentication:** Public key / Private key. Generate a key, save it as PEM, note the
      Key ID. Leave **Require DPoP header in token requests** on.
-   - **Okta API Scopes:** grant `okta.users.read`, `okta.groups.read`, `okta.apps.read`.
-   - **Admin roles:** assign **Read-Only Administrator**.
+   - **Okta API Scopes:** grant only these:
+
+     | Scope | Used for |
+     |---|---|
+     | `okta.users.read` | Users, last sign-in, MFA factors |
+     | `okta.groups.read` | Groups and members |
+     | `okta.apps.read` | Apps and their user/group assignments |
+     | `okta.appGrants.read` | API scopes granted to other apps (AR-10) |
+     | `okta.roles.read` | Admin roles of users and API apps (AR-10, AR-11) |
+
+   - **Admin roles:** assign **Super Administrator** for full coverage, or **Read-Only
+     Administrator** for a review that skips admin roles. See the tradeoff under Security design.
    - Optional: under **General**, limit token requests to your network zone.
 3. Store the PEM in a 1Password Secure Note, for example "Okta access review key" in `dev`, then
    delete the downloaded file.
@@ -110,7 +138,8 @@ bo@example.com,Bo Kim,employee,terminated,2026-08-01,Sam Lee
 
 - MFA status comes from enrolled Okta factors. It doesn't check whether a sign-on policy actually
   requires MFA.
-- Admin access is detected through admin groups, not individual admin role assignments.
+- Admin roles are read from direct user and API client assignments. Roles granted to a group are
+  not expanded to its members yet.
 - Apps assigned through a group show up once for each group that grants them.
 
 ## Development

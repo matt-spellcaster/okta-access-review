@@ -42,8 +42,46 @@ def test_demo_findings_are_exactly_the_planted_ones(demo):
         "AR-08": {"grace.park"},
         "AR-09": {"victor.nguyen"},
         "AR-10": {"Terraform Automation"},
-        "AR-11": {"priya.shah"},
+        "AR-11": {"priya.shah", "jordan.kim"},
     }
+
+
+def test_super_admin_api_client_is_high_and_read_only_admin_is_ignored(demo):
+    findings, _ = run_checks(demo)
+    [f] = [f for f in findings if f.check_id == "AR-10"]
+    assert f.severity == "high"
+    assert "Super Administrator" in f.detail and "okta.users.manage" in f.detail
+
+
+def test_api_client_with_only_write_scopes_is_medium(demo):
+    bot = next(a for a in demo.snapshot.apps if a.label == "Reporting Bot")
+    bot.granted_scopes = ["okta.groups.manage"]
+    findings, _ = run_checks(demo)
+    [f] = [f for f in findings if f.subject == "Reporting Bot"]
+    assert f.severity == "medium"
+    assert "Read-Only" not in f.detail
+
+
+def test_user_facing_app_with_write_scopes_is_ignored(demo):
+    findings, _ = run_checks(demo)
+    assert not [f for f in findings if f.subject == "Okta Dashboard"]
+
+
+def test_long_scope_list_is_truncated_with_high_risk_first(demo):
+    bot = next(a for a in demo.snapshot.apps if a.label == "Reporting Bot")
+    bot.granted_scopes = [f"okta.z{i}.manage" for i in range(10)] + ["okta.roles.manage", "okta.users.read"]
+    findings, _ = run_checks(demo)
+    [f] = [f for f in findings if f.subject == "Reporting Bot"]
+    assert "11 write scopes: okta.roles.manage, okta.z0.manage," in f.detail
+    assert f.detail.endswith("and 6 more.")
+
+
+def test_admin_found_by_role_or_group(demo):
+    findings, _ = run_checks(demo)
+    details = {f.subject.split("@")[0]: f.detail for f in findings if f.check_id == "AR-11"}
+    assert "admin roles: Super Administrator" in details["priya.shah"]
+    assert "admin groups: Okta Administrators" in details["priya.shah"]
+    assert "admin groups" not in details["jordan.kim"]
 
 
 def test_every_check_is_covered_by_the_demo(demo):

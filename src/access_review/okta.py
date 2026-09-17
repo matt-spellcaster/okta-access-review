@@ -183,5 +183,9 @@ def _error_text(resp: requests.Response) -> str:
     try:
         body = resp.json()
     except ValueError:
-        return resp.text[:200]
-    return body.get("errorSummary") or body.get("error_description") or body.get("error") or str(body)[:200]
+        body = {}
+    text = body.get("errorSummary") or body.get("error_description") or body.get("error") if isinstance(body, dict) else None
+    text = text or resp.text[:200].strip()
+    # Okta often explains 401/403 only in this header (e.g. insufficient_scope).
+    challenge = resp.headers.get("WWW-Authenticate")
+    return "; ".join(p for p in (text, challenge) if p) or "no details"

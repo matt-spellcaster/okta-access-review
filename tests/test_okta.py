@@ -172,9 +172,15 @@ def test_collect_normalizes_okta_responses(keypair):
             {"factorType": "push", "status": "ACTIVE"},
             {"factorType": "sms", "status": "PENDING_ACTIVATION"},
         ],
+        "/api/v1/users/u1/roles": [{"type": "SUPER_ADMIN", "label": "Super Administrator"}],
         "/api/v1/groups": [{"id": "g1", "type": "OKTA_GROUP", "profile": {"name": "Eng"}}],
         "/api/v1/groups/g1/users": [{"id": "u1"}, {"id": "u3"}],
-        "/api/v1/apps": [{"id": "a1", "label": "Svc", "status": "ACTIVE", "signOnMode": "OPENID_CONNECT"}],
+        "/api/v1/apps": [{
+            "id": "a1", "label": "Svc", "status": "ACTIVE", "signOnMode": "OPENID_CONNECT",
+            "credentials": {"oauthClient": {"client_id": "a1"}},
+            "settings": {"oauthClient": {"grant_types": ["client_credentials"]}},
+        }],
+        "/oauth2/v1/clients/a1/roles": [{"type": "CUSTOM", "label": "Okta MCP Role"}],
         "/api/v1/apps/a1/users": [{"id": "u1", "scope": "USER"}, {"id": "u3", "scope": "GROUP"}],
         "/api/v1/apps/a1/groups": [{"id": "g1"}],
         "/api/v1/apps/a1/grants": [
@@ -190,6 +196,11 @@ def test_collect_normalizes_okta_responses(keypair):
     assert snap.groups[0].members == {"u1", "u3"}
     assert snap.apps[0].users == {"u1"}
     assert snap.apps[0].granted_scopes == ["okta.users.manage"]
+    assert users["u1"].admin_roles == ["Super Administrator"]
+    assert users["u2"].admin_roles == []
+    assert users["u3"].admin_roles is None  # not looked up for deprovisioned users
+    assert snap.apps[0].admin_roles == ["Okta MCP Role"]
+    assert snap.apps[0].service_client is True
     # Read-only: the only non-GET request is the token request.
     assert all(url.endswith("/oauth2/v1/token") for url, _ in session.posts)
 
@@ -203,3 +214,27 @@ def test_collect_marks_mfa_unknown_when_factors_forbidden(keypair):
     assert [u.factors for u in snap.users] == [None, None]
     # Stops asking after the first 403 instead of hitting it for every user.
     assert not any(url.endswith("/u2/factors") for url, _ in session.gets)
+
+
+def test_collect_marks_roles_unknown_and_skips_grants_when_forbidden(keypair, capsys):
+    forbidden = FakeResponse({}, status=403, headers={"WWW-Authenticate": 'error="insufficient_scope"'})
+    session = FakeSession({
+        "/api/v1/users": [_user("u1", "ACTIVE")],
+        "/api/v1/users/u1/roles": forbidden,
+        "/api/v1/apps": [{"id": "a1", "label": "A"}, {"id": "a2", "label": "B"}],
+        "/api/v1/apps/a1/grants": forbidden,
+    })
+    snap = collect(client(session, keypair))
+    assert snap.users[0].admin_roles is None
+    assert [a.granted_scopes for a in snap.apps] == [[], []]
+    assert not any(url.endswith("/a2/grants") for url, _ in session.gets)
+    err = capsys.readouterr().err
+    assert "okta.roles.read" in err and "okta.appGrants.read" in err and "insufficient_scope" in err
+    assert len(snap.gaps) == 3
+    assert "AR-10 and AR-11" in snap.gaps[0]
+    assert "hiding apps" in snap.gaps[2]
+
+
+def test_no_gap_when_review_app_is_visible(keypair):
+    session = FakeSession({"/api/v1/apps": [{"id": "client123", "label": "Access Review"}]})
+    assert collect(client(session, keypair)).gaps == []
