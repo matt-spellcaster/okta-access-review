@@ -25,3 +25,8 @@ Read-only Okta user access review that produces SOC 2 / ISO 27001 audit evidence
   and look at `docs/images/*.png` before committing. The README sample must only ever use fixture data.
 - Keep the snapshot format (`models.py`) the same for live and fixture data; checks only see `Snapshot`.
 - Python 3.11+, dependencies pinned by `uv.lock` and `exclude-newer` in `pyproject.toml`.
+- CI (`.github/workflows/compliance.yml`): pin every action to a full commit SHA with a version
+  comment, keep `permissions: {}` at the top with per-job grants, never interpolate `${{ }}` into
+  `run:` (pass it via `env:`), and run `uvx zizmor@<pinned> --offline .github/workflows` after
+  editing. If a job is renamed, update `REQUIRED_CHECKS` in `scripts/ci/check_branch_rules.py`
+  and the ruleset. See `docs/ci.md`.

@@ -123,5 +123,21 @@ uv run python scripts/render_samples.py   # after changing the PDF layout or dem
 The tests cover every check, the Okta client (including DPoP), the PDF, email and Slack, and they
 fail if the sample report in this README is out of date.
 
+### Compliance workflow
+
+Every pull request and push to `master` runs the [Compliance workflow](docs/ci.md):
+
+| Check | SOC 2 | ISO 27001 |
+|---|---|---|
+| Tests, including the demo review | CC8.1 | A.8.29 |
+| Secret scan of the full git history (gitleaks) | CC6.1 | A.8.12 |
+| Dependency vulnerabilities and lockfile (pip-audit) | CC7.1 | A.8.8 |
+| Workflow security lint (zizmor) | CC8.1 | A.8.9 |
+| Branch protection on `master` | CC8.1 | A.8.32 |
+
+The results are bundled as evidence with SHA-256 hashes. On `master`, the bundle is signed with a
+GitHub artifact attestation. All actions are pinned to commit SHAs, and jobs run with minimal
+permissions.
+
 Related: [okta-mcp-local](https://github.com/matt-spellcaster/okta-mcp-local) connects an AI
 assistant to Okta for interactive admin work, with the same credential handling.
