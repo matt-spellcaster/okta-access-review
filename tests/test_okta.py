@@ -291,9 +291,10 @@ def _leaver_org(routes=None):
 
 
 def _roster(end_date="2026-08-01"):
-    from access_review.roster import RosterEntry
+    from access_review.roster import RosterEntry, _parse_end
+    ends, ends_at = _parse_end(end_date or "", timezone.utc, "gone@x.test")
     return {"gone@x.test": RosterEntry("gone@x.test", "Gone", "employee", "terminated",
-                                       date.fromisoformat(end_date) if end_date else None, "")}
+                                       ends, "", end_at=ends_at)}
 
 
 def test_activity_is_read_only_for_leavers(keypair):
@@ -304,9 +305,16 @@ def test_activity_is_read_only_for_leavers(keypair):
     assert [e.event_type for e in snap.events] == ["user.session.start"]
     assert snap.api_tokens[0].name == "ci-deploy"
     assert snap.activity_since == datetime(2026, 6, 17, tzinfo=timezone.utc)
-    # One query, for the leaver only. The person who still works here is not queried.
-    filters = [p["filter"] for url, p in session.gets if url.endswith("/api/v1/logs")]
-    assert filters == ['actor.id eq "u1"']
+    # Two queries, both for the leaver only. The person who still works here is
+    # never queried. Credentials are narrowed server-side and read the whole
+    # window; activity reads only what happened after they left.
+    sent = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert all('actor.id eq "u1"' in p["filter"] for p in sent)
+    credentials, activity = sent
+    assert 'eventType sw "app.oauth2.credentials.lifecycle."' in credentials["filter"]
+    assert credentials["since"] == "2026-06-17T00:00:00Z"
+    assert "eventType" not in activity["filter"]
+    assert activity["since"] == "2026-08-01T23:59:59.999999Z"
 
 
 def test_no_roster_means_no_activity_queries(keypair):
@@ -329,9 +337,9 @@ def test_a_client_the_leaver_set_up_is_queried_too(keypair):
 
     snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
 
-    filters = [p["filter"] for url, p in session.gets if url.endswith("/api/v1/logs")]
-    assert filters == ['actor.id eq "u1"', 'actor.id eq "0oaBOT"']
-    # The second query returns the same rows; events are deduplicated by uuid.
+    actors = [p["filter"].split('"')[1] for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert actors == ["u1", "u1", "0oaBOT"]
+    # Every query returns the same rows; events are deduplicated by uuid.
     assert len(snap.events) == 2
 
 
@@ -343,14 +351,37 @@ def test_a_termination_older_than_the_window_is_reported_as_a_gap(keypair):
     assert any("before the 90-day System Log window" in g for g in snap.gaps)
 
 
-def test_truncated_activity_is_reported_as_a_gap(keypair):
+def test_truncated_activity_says_the_counts_are_a_lower_bound(keypair):
+    """Okta returns the log oldest first, so a truncated read drops the most
+    recent activity -- exactly what AR-13 is looking for. Say so."""
     events = [_log("user.session.start", "2026-09-01T10:00:00.000Z", "u1", uuid=f"e{i}") for i in range(600)]
     session = _leaver_org({"/api/v1/logs": events})
 
     snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
 
     assert len(snap.events) == 500
-    assert any("only the oldest 500 were read" in g for g in snap.gaps)
+    [gap] = [g for g in snap.gaps if "lower bound" in g]
+    assert "later activity is not shown" in gap
+
+
+def test_an_hr_timestamp_narrows_the_activity_query(keypair):
+    session = _leaver_org({"/api/v1/logs": []})
+
+    collect(client(session, keypair), _roster("2026-08-01T14:05:00+00:00"), date(2026, 9, 15))
+
+    _, activity = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert activity["since"] == "2026-08-01T14:05:00Z"
+
+
+def test_a_leaver_with_no_end_date_is_still_checked_for_credentials(keypair):
+    """AR-13 has no anchor without an end date, but AR-12 does not need one."""
+    session = _leaver_org({"/api/v1/logs": []})
+
+    collect(client(session, keypair), _roster(None), date(2026, 9, 15))
+
+    sent = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert len(sent) == 1
+    assert "eventType sw" in sent[0]["filter"]
 
 
 def test_review_still_runs_when_logs_and_tokens_are_forbidden(keypair, capsys):

@@ -88,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         from .collect import collect
 
         try:
-            snapshot = collect(_client_from_env(), roster, args.as_of, config.activity_lookback_days)
+            snapshot = collect(_client_from_env(), roster, args.as_of,
+                               config.activity_lookback_days, config.timezone())
         except OktaError as e:
             print(f"access-review: {e}", file=sys.stderr)
             return 1

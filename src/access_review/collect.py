@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 
 from .models import (
     CREDENTIAL_EVENTS,
@@ -79,8 +79,8 @@ def _role_labels(assignments: list) -> list[str]:
     return sorted({a.get("label") or a.get("type", "unknown") for a in assignments})
 
 
-def _since(day: date) -> str:
-    return datetime.combine(day, time.min, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _collect_activity(
@@ -90,6 +90,7 @@ def _collect_activity(
     roster: dict[str, RosterEntry],
     as_of: date,
     lookback_days: int,
+    tz: tzinfo,
     gaps: list[str],
 ) -> tuple[list[ActivityEvent], datetime | None]:
     """Read what the org's leavers, and the API clients they set up, have done.
@@ -97,51 +98,77 @@ def _collect_activity(
     Queried per leaver rather than across the org, so the volume follows the
     number of people who left, not the size of the org.
     """
-    horizon = as_of - timedelta(days=lookback_days)
+    horizon = datetime.combine(as_of - timedelta(days=lookback_days), time.min, tzinfo=timezone.utc)
     events: list[ActivityEvent] = []
     seen: set[str] = set()
 
-    def fetch(actor_id: str, who: str) -> list[ActivityEvent]:
-        result = logs_api.get_capped(
-            "/api/v1/logs", {"since": _since(horizon), "filter": f'actor.id eq "{actor_id}"'}
-        )
+    def fetch(actor_id: str, since: datetime, kinds: tuple[str, ...] | None = None) -> tuple[list[ActivityEvent], bool]:
+        query = f'actor.id eq "{actor_id}"'
+        if kinds:
+            # Narrowed server-side. Asking for everything and filtering here
+            # spends the cap on events no check will read.
+            query += " and (" + " or ".join(f'eventType sw "{k}"' for k in kinds) + ")"
+        result = logs_api.get_capped("/api/v1/logs", {"since": _iso(since), "filter": query})
         if result is None:
-            return []
+            return [], False
         raw, truncated = result
-        if truncated:
-            gaps.append(
-                f"More than {MAX_EVENTS} System Log events for {who} since {horizon}; "
-                f"only the oldest {MAX_EVENTS} were read, so later activity may be missing."
-            )
         fresh = [ActivityEvent.from_okta(e) for e in raw if e.get("uuid") not in seen]
         seen.update(e["uuid"] for e in raw if e.get("uuid"))
-        return fresh
+        return fresh, truncated
+
+    def credentials(actor_id: str, who: str) -> None:
+        """Who set up which API client. Needs the whole window, because they
+        set it up while they still worked here."""
+        found, truncated = fetch(actor_id, horizon, CREDENTIAL_EVENTS)
+        events.extend(found)
+        if truncated:
+            gaps.append(
+                f"More than {MAX_EVENTS} credential events for {who} since {horizon.date()}; "
+                f"the API clients AR-12 lists for them may be incomplete."
+            )
+
+    def activity(actor_id: str, who: str, after: datetime) -> None:
+        """What they did after leaving. Only the window AR-13 reads, so the cap
+        is not spent on months of ordinary work before the end date."""
+        found, truncated = fetch(actor_id, max(after, horizon))
+        events.extend(found)
+        if truncated:
+            gaps.append(
+                f"More than {MAX_EVENTS} System Log events for {who} after {after.date()}. "
+                f"Okta returns the log oldest first, so AR-13 read the earliest {MAX_EVENTS}: "
+                f"its counts and last-seen date are a lower bound, and later activity is not shown."
+            )
 
     leavers = [(u, e) for u in users if (e := entry_for(roster, u.email, u.login)) and e.is_gone(as_of)]
     for user, entry in leavers:
-        # Read the whole window, not just the part after they left: the events
-        # that say which API clients they set up are from while they worked here.
-        events += fetch(user.id, user.login)
-        if entry.end_date and entry.end_date < horizon:
+        credentials(user.id, user.login)
+        ends = entry.access_ends(tz)
+        if ends:
+            activity(user.id, user.login, ends)
+        if entry.end_date and entry.end_date < horizon.date():
             gaps.append(
                 f"{user.login} left on {entry.end_date}, before the {lookback_days}-day System Log "
-                f"window opens on {horizon}. Activity in between cannot be checked (AR-13)."
+                f"window opens on {horizon.date()}. Activity in between cannot be checked (AR-13)."
             )
 
     # An API client the leaver set up keeps working on its own credentials, so
     # its own activity counts as theirs.
     by_client = {a.client_id: a for a in apps if a.client_id and a.status == "ACTIVE"}
-    owned = {
-        t["id"]
-        for e in events
-        if e.is_kind(CREDENTIAL_EVENTS)
-        for t in e.targets
-        if t.get("id") in by_client
-    }
-    for client_id in sorted(owned):
-        events += fetch(client_id, by_client[client_id].label)
+    owned: dict[str, datetime] = {}
+    for user, entry in leavers:
+        ends = entry.access_ends(tz)
+        if ends is None:
+            continue
+        for event in events:
+            if event.actor_id != user.id or not event.is_kind(CREDENTIAL_EVENTS):
+                continue
+            for target in event.targets:
+                if target.get("id") in by_client:
+                    owned[target["id"]] = min(owned.get(target["id"], ends), ends)
+    for client_id, after in sorted(owned.items()):
+        activity(client_id, by_client[client_id].label, after)
 
-    return events, datetime.combine(horizon, time.min, tzinfo=timezone.utc)
+    return events, horizon
 
 
 def collect(
@@ -149,6 +176,7 @@ def collect(
     roster: dict[str, RosterEntry] | None = None,
     as_of: date | None = None,
     lookback_days: int = 90,
+    tz: tzinfo = timezone.utc,
 ) -> Snapshot:
     collected_at = datetime.now(timezone.utc)
     gaps: list[str] = []
@@ -235,7 +263,7 @@ def collect(
     activity_since = None
     if roster is not None:
         events, activity_since = _collect_activity(
-            logs_api, users, apps, roster, as_of or collected_at.date(), lookback_days, gaps
+            logs_api, users, apps, roster, as_of or collected_at.date(), lookback_days, tz, gaps
         )
 
     return Snapshot(
