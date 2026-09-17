@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     # Default to the (UTC) collection date so the review date matches the data.
     as_of = args.as_of or snapshot.collected_at.date()
     findings, skipped = run_checks(ReviewContext(snapshot, roster, config, as_of))
-    run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of)
+    run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of, roster_path=args.roster)
 
     for f in findings:
         print(f"{f.severity:<8} {f.check_id}  {f.subject:<32} {f.detail}")

@@ -66,6 +66,8 @@ that it can see its own app. If it can't, the app list is marked as filtered.
 ## Personal data
 
 - `reports/` and `roster/` are git-ignored, and a pre-commit hook blocks `env` and private keys.
+  Each report folder includes a copy of the HR roster it used, so treat report folders as
+  confidential HR data.
 - **Email and Slack messages contain only counts and completeness.** Names and details are only in
   the PDF.
 - **Uploading the PDF to Slack is opt-in** and is meant for a private, need-to-know channel. The

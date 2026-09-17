@@ -56,7 +56,8 @@ those and nothing else.
 | AR-10 | Service app with write scopes or an admin role that can make changes (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
 | AR-11 | Admin user, for the reviewer to confirm | info | SOC 2 CC6.3 · ISO A.8.2 |
 
-AR-01 to AR-03 need the HR roster. Without it they're skipped, and the report says so.
+AR-01 to AR-03 compare Okta with an HR roster: a CSV exported from the HR system and passed in with
+`--roster` (there's no live HR integration yet). Without it they're skipped, and the report says so.
 Thresholds and group names are configurable.
 
 ## Evidence produced
@@ -68,8 +69,9 @@ Each run writes a folder named after its collection time:
 | `report.pdf` / `report.md` | Findings with fixes and control mapping, access by user, reviewer sign-off |
 | `access_matrix.csv` | Every user's access, with blank `decision` and `reviewer` columns to fill in |
 | `findings.csv` | Tracking remediation |
-| `snapshot.json` | The exact data the checks ran on |
-| `manifest.json` | Config, completeness, and a SHA-256 hash of every file |
+| `snapshot.json` | The exact Okta data the checks ran on |
+| `roster.csv` | A copy of the HR roster export the review compared against |
+| `manifest.json` | Config, roster name, row count and hash, completeness, and a SHA-256 hash of every file |
 
 `--fail-on high` exits with status 2 when there's a high or critical finding, so a scheduled job or
 CI pipeline can alert on it.

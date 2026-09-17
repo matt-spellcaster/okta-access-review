@@ -168,6 +168,7 @@ def write_pdf(
     as_of: date,
     matrix: list[dict],
     branding: Branding | None = None,
+    roster_label: str = "not provided",
 ) -> Path:
     brand = branding or Branding()
     t = _Theme(brand)
@@ -194,6 +195,7 @@ def write_pdf(
         ["Review date", as_of.isoformat()],
         ["Scope", f"{len(snapshot.users)} users ({live} not deprovisioned), "
                   f"{len(snapshot.groups)} groups, {len(snapshot.apps)} apps"],
+        ["HR roster", roster_label],
         ["Status", "INCOMPLETE, see data gaps" if snapshot.gaps else "Complete"],
         ["Tool", f"okta-access-review {__version__} (read-only)"],
     ]
