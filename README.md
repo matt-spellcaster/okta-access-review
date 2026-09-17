@@ -1,24 +1,14 @@
 # okta-access-review
 
-**Automated user access reviews for Okta, with audit-ready evidence.**
+A read-only command-line tool that runs a user access review on an Okta org. It compares Okta users,
+groups, apps, MFA enrollment and admin roles with an HR roster, flags access to remove or confirm, and
+saves the results as evidence for SOC 2 (CC6.1–CC6.3) and ISO 27001:2022 (A.5.15–A.8.5).
 
-Periodic access reviews are a core control in SOC 2 (CC6.2, CC6.3) and ISO 27001 (A.5.18), and many
-teams still do them by hand in spreadsheets every quarter. This tool pulls users, groups, apps, MFA
-enrollment and admin roles from Okta and compares them with the HR roster. It flags access that
-shouldn't exist and gives the reviewer a report that's ready for sign-off, with hashed evidence
-behind it.
-
-- **11 checks mapped to controls:** terminated users who still have access, contractors past their
-  end date, missing MFA, stale accounts, over-privileged API clients and more. Each check maps to
-  SOC 2 and ISO 27001:2022.
-- **Read-only by design:** read scopes only, Private Key JWT, and DPoP-bound tokens. It was tested
-  against a live Okta org to find the least-privileged setup that still covers admin access.
-- **Evidence an auditor can trust:** a PDF with a sign-off page, CSVs for the review decisions, the
-  raw data snapshot, and a manifest with a SHA-256 hash of every file.
-- **Honest about gaps:** if Okta hides data from the tool, the report says the review is incomplete
-  instead of looking clean.
-- **Delivered where the team works:** the PDF by email, and a summary (optionally with the PDF) in
-  Slack. Messages never contain personal data.
+- 11 checks, such as terminated users with live accounts, missing MFA, and API clients with write access.
+- Read-only scopes, Private Key JWT, and DPoP-bound tokens.
+- Output: a PDF with a sign-off page, CSVs, the raw data, and a manifest of SHA-256 hashes.
+- The report is marked incomplete if Okta withholds any data.
+- Optionally emails the PDF and posts a summary to Slack. Messages contain no personal data.
 
 ## Sample report
 
