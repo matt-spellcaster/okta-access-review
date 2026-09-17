@@ -167,6 +167,29 @@ class OktaClient:
             params = None  # the next link already carries the query
         return items
 
+    def get_capped(self, path: str, params: dict | None = None, max_items: int = 1000) -> tuple[list, bool]:
+        """GET a collection, stopping at max_items. Returns (items, truncated).
+
+        Use this instead of get_all for the System Log, for two reasons. It can
+        return far more than a review needs, and its next link is meant for
+        polling, so it is always present -- get_all would never finish. An empty
+        page is the real end of the data.
+        """
+        url = f"{self.org_url}{path}"
+        items: list = []
+        while url:
+            resp = self._get(url, params)
+            body = resp.json()
+            page = body if isinstance(body, list) else [body]
+            if not page:
+                break
+            items.extend(page)
+            if len(items) >= max_items:
+                return items[:max_items], True
+            url = resp.links.get("next", {}).get("url")
+            params = None  # the next link already carries the query
+        return items, False
+
 
 def _needs_nonce(resp: requests.Response) -> bool:
     if resp.status_code not in (400, 401) or "DPoP-Nonce" not in resp.headers:

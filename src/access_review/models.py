@@ -16,6 +16,21 @@ SIGN_IN_STATUSES = {"ACTIVE", "RECOVERY", "PASSWORD_EXPIRED", "LOCKED_OUT"}
 # Statuses where sign-in is blocked but the account and its access remain.
 DISABLED_STATUSES = {"SUSPENDED", "DEPROVISIONED"}
 
+# System Log event types, grouped by what each one tells a review.
+# Someone signed in, or used a session.
+SIGN_IN_EVENTS = (
+    "user.authentication.sso", "user.session.start",
+    "user.authentication.verify", "user.session.access_admin_app",
+)
+# A credential was exchanged for access: an API client acting, or an app token.
+TOKEN_EVENTS = ("app.oauth2.token.grant", "app.oauth2.authorize.code")
+# A client's credentials were created, rotated or read. These say who set an
+# API client up, which is the only record Okta keeps of who owns one.
+CREDENTIAL_EVENTS = (
+    "app.oauth2.client.lifecycle.create", "app.oauth2.credentials.lifecycle.",
+    "app.oauth2.client.read_client_secret",
+)
+
 
 def parse_time(value: str | None) -> datetime | None:
     if not value:
@@ -191,6 +206,11 @@ class ActivityEvent:
     actor_type: str = ""
     outcome: str = ""
     targets: list[dict] = field(default_factory=list)
+
+    def is_kind(self, kinds: tuple[str, ...]) -> bool:
+        """Match one of the groups above. Prefixes, because Okta subdivides:
+        app.oauth2.token.grant also appears as .access_token and .refresh_token."""
+        return self.event_type.startswith(kinds)
 
     @classmethod
     def from_okta(cls, raw: dict) -> ActivityEvent:

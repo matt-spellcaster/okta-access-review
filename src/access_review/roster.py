@@ -27,6 +27,14 @@ class RosterEntry:
         return self.status == "terminated" or (self.end_date is not None and self.end_date < as_of)
 
 
+def entry_for(roster: dict[str, RosterEntry] | None, email: str, login: str) -> RosterEntry | None:
+    """Match an Okta user to their HR record. The collector and the checks both
+    need this, and they have to agree on it."""
+    if roster is None:
+        return None
+    return roster.get(email) or roster.get(login.lower())
+
+
 def load_roster(path: Path) -> dict[str, RosterEntry]:
     entries = {}
     with path.open(newline="") as f:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from .models import DISABLED_STATUSES, LIVE_STATUSES, SIGN_IN_STATUSES, Snapshot, User
-from .roster import RosterEntry
+from .roster import RosterEntry, entry_for
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
 # Built-in roles that can view but not change anything.
@@ -35,6 +35,8 @@ class Config:
     admin_groups: list[str] = field(default_factory=lambda: ["Okta Administrators"])
     # Logins that are expected to be missing from the HR roster.
     service_accounts: list[str] = field(default_factory=list)
+    # How far back to read the System Log (AR-12, AR-13). Okta keeps 90 days.
+    activity_lookback_days: int = 90
     # PDF look; see pdf.Branding. Empty means the plain layout.
     branding: dict = field(default_factory=dict)
 
@@ -72,9 +74,7 @@ class ReviewContext:
     as_of: date
 
     def roster_entry(self, user: User) -> RosterEntry | None:
-        if self.roster is None:
-            return None
-        return self.roster.get(user.email) or self.roster.get(user.login.lower())
+        return entry_for(self.roster, user.email, user.login)
 
     def is_service_account(self, user: User) -> bool:
         return user.login.lower() in {s.lower() for s in self.config.service_accounts}
