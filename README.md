@@ -56,7 +56,8 @@ those and nothing else.
 | AR-10 | Service app with write scopes or an admin role that can make changes (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
 | AR-11 | Admin user, for the reviewer to confirm | info | SOC 2 CC6.3 · ISO A.8.2 |
 
-AR-01 to AR-03 need the HR roster. Without it they're skipped, and the report says so.
+AR-01 to AR-03 compare Okta with an HR roster: a CSV exported from the HR system and passed in with
+`--roster` (there's no live HR integration yet). Without it they're skipped, and the report says so.
 Thresholds and group names are configurable.
 
 ## Evidence produced
@@ -68,8 +69,9 @@ Each run writes a folder named after its collection time:
 | `report.pdf` / `report.md` | Findings with fixes and control mapping, access by user, reviewer sign-off |
 | `access_matrix.csv` | Every user's access, with blank `decision` and `reviewer` columns to fill in |
 | `findings.csv` | Tracking remediation |
-| `snapshot.json` | The exact data the checks ran on |
-| `manifest.json` | Config, completeness, and a SHA-256 hash of every file |
+| `snapshot.json` | The exact Okta data the checks ran on |
+| `roster.csv` | A copy of the HR roster export the review compared against |
+| `manifest.json` | Config, roster name, row count and hash, completeness, and a SHA-256 hash of every file |
 
 `--fail-on high` exits with status 2 when there's a high or critical finding, so a scheduled job or
 CI pipeline can alert on it.
@@ -122,6 +124,22 @@ uv run python scripts/render_samples.py   # after changing the PDF layout or dem
 
 The tests cover every check, the Okta client (including DPoP), the PDF, email and Slack, and they
 fail if the sample report in this README is out of date.
+
+### Compliance workflow
+
+Every pull request and push to `master` runs the [Compliance workflow](docs/ci.md):
+
+| Check | SOC 2 | ISO 27001 |
+|---|---|---|
+| Tests, including the demo review | CC8.1 | A.8.29 |
+| Secret scan of the full git history (gitleaks) | CC6.1 | A.8.12 |
+| Dependency vulnerabilities and lockfile (pip-audit) | CC7.1 | A.8.8 |
+| Workflow security lint (zizmor) | CC8.1 | A.8.9 |
+| Branch protection on `master` | CC8.1 | A.8.32 |
+
+The results are bundled as evidence with SHA-256 hashes. On `master`, the bundle is signed with a
+GitHub artifact attestation. All actions are pinned to commit SHAs, and jobs run with minimal
+permissions.
 
 Related: [okta-mcp-local](https://github.com/matt-spellcaster/okta-mcp-local) connects an AI
 assistant to Okta for interactive admin work, with the same credential handling.

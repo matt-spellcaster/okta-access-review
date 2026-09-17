@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import shutil
 from collections import Counter
 from dataclasses import asdict
 from datetime import date
@@ -54,7 +55,8 @@ def access_matrix(snapshot: Snapshot) -> list[dict]:
     return rows
 
 
-def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[str], as_of: date) -> str:
+def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[str], as_of: date,
+                    roster: str = "not provided") -> str:
     counts = Counter(f.severity for f in findings)
     live = sum(1 for u in snapshot.users if u.status != "DEPROVISIONED")
     lines = [
@@ -65,6 +67,7 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
         f"- **Review date:** {as_of.isoformat()}",
         f"- **Scope:** {len(snapshot.users)} users ({live} not deprovisioned), "
         f"{len(snapshot.groups)} groups, {len(snapshot.apps)} apps",
+        f"- **HR roster:** {roster}",
         f"- **Tool:** okta-access-review {__version__} (read-only)",
         "",
         "## Summary",
@@ -132,6 +135,24 @@ def _write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
         writer.writerows(rows)
 
 
+def roster_record(roster_path: Path | None) -> dict | None:
+    """What the review compared against: the roster's file name, row count and hash."""
+    if roster_path is None:
+        return None
+    data = roster_path.read_bytes()
+    with roster_path.open(newline="") as f:
+        rows = sum(1 for _ in csv.DictReader(f))
+    # Only the file name: the full path could reveal a local username.
+    return {"source_name": roster_path.name, "copied_as": "roster.csv", "rows": rows,
+            "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def roster_label(roster: dict | None) -> str:
+    if roster is None:
+        return "not provided (AR-01 to AR-03 skipped)"
+    return f"{roster['source_name']}, {roster['rows']} people, SHA-256 {roster['sha256'][:12]}"
+
+
 def write_report(
     out_dir: Path,
     snapshot: Snapshot,
@@ -139,16 +160,26 @@ def write_report(
     skipped: list[str],
     config: Config,
     as_of: date,
+    roster_path: Path | None = None,
 ) -> Path:
     run_dir = out_dir / snapshot.collected_at.strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of))
+    # Keep the exact roster this review used, so the evidence shows what it was compared against.
+    roster = roster_record(roster_path)
+    if roster_path is not None:
+        shutil.copyfile(roster_path, run_dir / "roster.csv")
+    else:
+        (run_dir / "roster.csv").unlink(missing_ok=True)  # don't hash a stale copy from an earlier run
+    label = roster_label(roster)
+
+    (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of, label))
     finding_rows = [{**asdict(f), "controls": "; ".join(f.controls)} for f in findings]
     _write_csv(run_dir / "findings.csv", finding_rows, list(Finding.__dataclass_fields__))
     matrix = access_matrix(snapshot)
     _write_csv(run_dir / "access_matrix.csv", matrix, MATRIX_COLUMNS)
-    write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix, Branding.from_config(config.branding))
+    write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix,
+              Branding.from_config(config.branding), roster_label=label)
     (run_dir / "snapshot.json").write_text(json.dumps(snapshot.to_dict(), indent=2) + "\n")
 
     manifest = {
@@ -157,6 +188,7 @@ def write_report(
         "collected_at": snapshot.to_dict()["collected_at"],
         "review_date": as_of.isoformat(),
         "config": asdict(config),
+        "roster": roster,
         "finding_counts": dict(Counter(f.severity for f in findings)),
         "skipped_checks": skipped,
         "complete": not snapshot.gaps,

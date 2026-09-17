@@ -24,7 +24,9 @@ def test_writes_evidence_with_matching_hashes(tmp_path):
     d = run_dir(tmp_path)
     assert d.name == "20260915T140000Z"
     manifest = json.loads((d / "manifest.json").read_text())
-    assert set(manifest["files"]) == {"report.md", "report.pdf", "findings.csv", "access_matrix.csv", "snapshot.json"}
+    assert set(manifest["files"]) == {
+        "report.md", "report.pdf", "findings.csv", "access_matrix.csv", "snapshot.json", "roster.csv",
+    }
     for name, digest in manifest["files"].items():
         assert hashlib.sha256((d / name).read_bytes()).hexdigest() == digest
     assert manifest["finding_counts"]["critical"] == 1
@@ -113,6 +115,35 @@ def test_mfa_unknown_only_for_users_who_can_sign_in(tmp_path):
 def test_default_review_date_is_collection_date(tmp_path):
     main(["--snapshot", str(FIXTURES / "demo_snapshot.json"), "--out", str(tmp_path)])
     assert json.loads((run_dir(tmp_path) / "manifest.json").read_text())["review_date"] == "2026-09-15"
+
+
+def test_manifest_records_the_roster_used(tmp_path):
+    main(DEMO_ARGS + ["--out", str(tmp_path)])
+    d = run_dir(tmp_path)
+    source = FIXTURES / "demo_roster.csv"
+    manifest = json.loads((d / "manifest.json").read_text())
+    assert manifest["roster"] == {
+        "source_name": "demo_roster.csv",  # file name only, never the local path
+        "copied_as": "roster.csv",
+        "rows": 9,
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
+    assert (d / "roster.csv").read_bytes() == source.read_bytes()
+    assert manifest["files"]["roster.csv"] == manifest["roster"]["sha256"]
+    assert str(FIXTURES) not in (d / "manifest.json").read_text()
+    label = f"demo_roster.csv, 9 people, SHA-256 {manifest['roster']['sha256'][:12]}"
+    assert f"- **HR roster:** {label}" in (d / "report.md").read_text()
+
+
+def test_no_roster_is_recorded_and_stale_copy_removed(tmp_path):
+    main(DEMO_ARGS + ["--out", str(tmp_path)])  # first run leaves roster.csv behind
+    no_roster = [a for a in DEMO_ARGS if a not in ("--roster", str(FIXTURES / "demo_roster.csv"))]
+    main(no_roster + ["--out", str(tmp_path)])  # same collection time, same folder
+    d = run_dir(tmp_path)
+    manifest = json.loads((d / "manifest.json").read_text())
+    assert manifest["roster"] is None
+    assert not (d / "roster.csv").exists() and "roster.csv" not in manifest["files"]
+    assert "- **HR roster:** not provided (AR-01 to AR-03 skipped)" in (d / "report.md").read_text()
 
 
 def test_fail_on_sets_exit_code(tmp_path):

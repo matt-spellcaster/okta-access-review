@@ -84,6 +84,10 @@ bo@example.com,Bo Kim,employee,terminated,2026-08-01,Sam Lee
 
 Keep real rosters in `roster/`, which is git-ignored.
 
+The roster is an export, not a live connection, so each report keeps a copy of it as `roster.csv`,
+and `manifest.json` records its file name (not the full path), row count and SHA-256. An auditor
+can then see exactly which HR data a review was compared against.
+
 ## Command-line options
 
 | Option | Meaning |
