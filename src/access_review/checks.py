@@ -8,11 +8,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from .models import DISABLED_STATUSES, LIVE_STATUSES, SIGN_IN_STATUSES, Snapshot, User
+from .models import (
+    CREDENTIAL_EVENTS,
+    DISABLED_STATUSES,
+    LIVE_STATUSES,
+    SIGN_IN_EVENTS,
+    SIGN_IN_STATUSES,
+    TOKEN_EVENTS,
+    Snapshot,
+    User,
+)
 from .roster import RosterEntry, entry_for
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
@@ -231,6 +240,91 @@ def _privileged_service_app(ctx: ReviewContext, check: Check) -> list[Finding]:
     return out
 
 
+def _clients_set_up_by(snapshot: Snapshot, user_id: str) -> dict[str, str]:
+    """Active API clients this person created, rotated or read the secret of,
+    as {client_id: label}. Okta keeps no owner field on a client, so the log is
+    the only record of who set one up."""
+    by_client = {a.client_id: a for a in snapshot.apps if a.client_id and a.status == "ACTIVE"}
+    found = {}
+    for event in snapshot.events_for_actor(user_id):
+        if not event.is_kind(CREDENTIAL_EVENTS):
+            continue
+        for target in event.targets:
+            app = by_client.get(target.get("id"))
+            if app:
+                found[app.client_id] = app.label
+    return found
+
+
+def _left_on(entry: RosterEntry) -> str:
+    return f"Left {entry.end_date}" if entry.end_date else "HR shows terminated"
+
+
+def _leavers(ctx: ReviewContext) -> list[tuple[User, RosterEntry]]:
+    """Everyone the roster says is gone: terminated, or past their end date."""
+    pairs = ((u, ctx.roster_entry(u)) for u in ctx.snapshot.users)
+    return [(u, e) for u, e in pairs if e and e.is_gone(ctx.as_of)]
+
+
+def _leaver_credentials(ctx: ReviewContext, check: Check) -> list[Finding]:
+    out = []
+    for user, entry in _leavers(ctx):
+        parts = []
+        tokens = sorted(t.name or t.id for t in ctx.snapshot.tokens_for(user.id))
+        if tokens:
+            noun = "API token" if len(tokens) == 1 else "API tokens"
+            parts.append(f"{noun} {', '.join(tokens)}")
+        clients = sorted(_clients_set_up_by(ctx.snapshot, user.id).values())
+        if clients:
+            noun = "API client" if len(clients) == 1 else "API clients"
+            parts.append(f"{noun} they set up: {', '.join(clients)}")
+        # Groups and apps are AR-09's job; this check is only about credentials
+        # that keep working on their own, whatever the account status is.
+        if parts:
+            out.append(check.finding(user.login, f"{_left_on(entry)} but still holds {'; '.join(parts)}."))
+    return out
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _activity_after_leaving(ctx: ReviewContext, check: Check) -> list[Finding]:
+    out = []
+    for user, entry in _leavers(ctx):
+        if entry.end_date is None:
+            out.append(check.finding(
+                user.login,
+                "HR shows terminated with no end date, so activity after they left cannot be identified.",
+                severity="info",
+            ))
+            continue
+        # The end date is their last working day, so only what follows it counts.
+        cutoff = datetime.combine(entry.end_date, time.max, tzinfo=timezone.utc)
+        actors = {user.id} | set(_clients_set_up_by(ctx.snapshot, user.id))
+        after = sorted(
+            (e for a in actors for e in ctx.snapshot.events_for_actor(a) if e.published and e.published > cutoff),
+            key=lambda e: e.published,
+        )
+        parts = []
+        for events, noun in (
+            ([e for e in after if e.is_kind(SIGN_IN_EVENTS)], "sign-in"),
+            ([e for e in after if e.is_kind(TOKEN_EVENTS)], "token grant"),
+            ([e for e in after if e.is_kind(CREDENTIAL_EVENTS)], "credential change"),
+        ):
+            if events:
+                parts.append(_count(len(events), noun))
+        if not parts:
+            continue
+        last = after[-1]
+        where = next((t["label"] for t in last.targets if t.get("label")), last.event_type)
+        out.append(check.finding(
+            user.login,
+            f"{', '.join(parts)} after {entry.end_date}; last {last.published.date()} ({where}).",
+        ))
+    return out
+
+
 def _admin_membership(ctx: ReviewContext, check: Check) -> list[Finding]:
     admin_groups = {n.lower() for n in ctx.config.admin_groups}
     out = []
@@ -314,6 +408,20 @@ CHECKS: list[Check] = [
         ["SOC 2 CC6.3", "ISO 27001 A.8.2"],
         "Reviewer confirms each admin still needs the role.",
         _admin_membership,
+    ),
+    Check(
+        "AR-12", "Leaver still holds a working credential", "critical",
+        ["SOC 2 CC6.2", "SOC 2 CC6.3", "ISO 27001 A.5.18"],
+        "Revoke the API token and rotate or delete the client's credentials. "
+        "Deactivating the account does not do either.",
+        _leaver_credentials, needs_roster=True,
+    ),
+    Check(
+        "AR-13", "Activity after the termination date", "critical",
+        ["SOC 2 CC6.2", "SOC 2 CC7.2", "ISO 27001 A.5.18", "ISO 27001 A.8.16"],
+        "Treat as a possible incident: revoke the credential, review what it reached, "
+        "and confirm the termination date with HR.",
+        _activity_after_leaving, needs_roster=True,
     ),
 ]
 

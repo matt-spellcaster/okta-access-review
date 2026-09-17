@@ -89,9 +89,9 @@ def blocks_of(payload: dict) -> list[dict]:
 def test_payload_has_summary_and_no_personal_data(demo_run):
     run_dir, snapshot, findings = demo_run
     payload = slack.build_payload(snapshot, findings, run_dir, brand="Acme")
-    assert payload["text"] == "Acme · Okta access review (complete): 1 critical, acme-demo.okta.com"
+    assert payload["text"] == "Acme · Okta access review (complete): 5 critical, acme-demo.okta.com"
     text = all_text(payload)
-    assert "*Critical*   1" in text and "*High*   4" in text and "*12* total" in text
+    assert "*Critical*   5" in text and "*High*   4" in text and "*16* total" in text
     assert run_dir.name in text
     for user in snapshot.users:
         assert user.login not in text
@@ -105,7 +105,7 @@ def test_attention_list_groups_by_check_worst_first(demo_run):
     [attention] = [b for b in blocks_of(slack.build_payload(snapshot, findings, run_dir))
                    if b.get("text", {}).get("text", "").startswith("*What needs attention*")]
     lines = attention["text"]["text"].splitlines()[1:]
-    assert len(lines) == 11  # one per check that fired
+    assert len(lines) == 13  # one per check that fired
     assert lines[0] == ":red_circle:  `AR-01`  Terminated in HR but account still live"
     assert lines[-1] == ":large_blue_circle:  `AR-11`  Admin user  ×2"
 

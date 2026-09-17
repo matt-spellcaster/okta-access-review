@@ -110,10 +110,10 @@ def demo_run(tmp_path):
 def test_message_has_summary_and_pdf_but_no_personal_data(demo_run):
     run_dir, snapshot, findings = demo_run
     msg = build_message(settings(), snapshot, findings, run_dir)
-    assert msg["Subject"] == "Okta access review (complete): 1 critical, acme-demo.okta.com"
+    assert msg["Subject"] == "Okta access review (complete): 5 critical, acme-demo.okta.com"
     assert msg["To"] == "ciso@acme.example, auditor@acme.example"
     body = msg.get_body(("plain",)).get_content()
-    assert "critical 1" in body and "total    12" in body
+    assert "critical 5" in body and "total    16" in body
     for user in snapshot.users:
         assert user.login not in body
         assert user.profile["lastName"] not in body

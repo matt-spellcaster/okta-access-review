@@ -43,6 +43,8 @@ def test_demo_findings_are_exactly_the_planted_ones(demo):
         "AR-09": {"victor.nguyen"},
         "AR-10": {"Terraform Automation"},
         "AR-11": {"priya.shah", "jordan.kim"},
+        "AR-12": {"marcus.lee", "victor.nguyen"},
+        "AR-13": {"marcus.lee", "victor.nguyen"},
     }
 
 
@@ -114,8 +116,8 @@ def test_findings_sorted_most_severe_first(demo):
 def test_roster_checks_skipped_without_roster(demo):
     demo.roster = None
     findings, skipped = run_checks(demo)
-    assert skipped == ["AR-01", "AR-02", "AR-03"]
-    assert not {"AR-01", "AR-02", "AR-03"} & {f.check_id for f in findings}
+    assert skipped == ["AR-01", "AR-02", "AR-03", "AR-12", "AR-13"]
+    assert not {"AR-01", "AR-02", "AR-03", "AR-12", "AR-13"} & {f.check_id for f in findings}
 
 
 def test_without_roster_contractor_type_comes_from_okta_profile(demo):
