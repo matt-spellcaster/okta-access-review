@@ -20,5 +20,18 @@ if ! OKTA_PRIVATE_KEY="$(/opt/homebrew/bin/op read "$OKTA_PRIVATE_KEY_REF")"; th
 fi
 export OKTA_PRIVATE_KEY
 unset OKTA_PRIVATE_KEY_REF
+# Email is optional; only fetch the SMTP password when a recipient is set.
+if [[ -n "$REPORT_EMAIL_TO" ]]; then
+  if [[ -z "$SMTP_PASSWORD_REF" ]]; then
+    echo "access-review: REPORT_EMAIL_TO is set but SMTP_PASSWORD_REF is not" >&2
+    exit 1
+  fi
+  if ! SMTP_PASSWORD="$(/opt/homebrew/bin/op read "$SMTP_PASSWORD_REF")"; then
+    echo "access-review: could not read the SMTP password from 1Password ($SMTP_PASSWORD_REF)" >&2
+    exit 1
+  fi
+  export SMTP_PASSWORD
+fi
+unset SMTP_PASSWORD_REF
 cd "$DIR"
 exec /opt/homebrew/bin/uv run --frozen access-review "$@"

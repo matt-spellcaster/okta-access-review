@@ -218,7 +218,8 @@ def _privileged_service_app(ctx: ReviewContext, check: Check) -> list[Finding]:
         if manage:
             shown = ", ".join(manage[:MAX_SCOPES_SHOWN])
             more = f" and {len(manage) - MAX_SCOPES_SHOWN} more" if len(manage) > MAX_SCOPES_SHOWN else ""
-            parts.append(f"{len(manage)} write scopes: {shown}{more}")
+            label = "write scope" if len(manage) == 1 else f"{len(manage)} write scopes"
+            parts.append(f"{label}: {shown}{more}")
         severity = "high" if "Super Administrator" in app.admin_roles else None
         out.append(check.finding(app.label, f"API client has {'; '.join(parts)}.", severity=severity))
     return out

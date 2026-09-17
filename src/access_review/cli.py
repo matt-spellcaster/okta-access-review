@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import smtplib
 import sys
 from datetime import date
 from pathlib import Path
 
 from .checks import SEVERITIES, Config, ReviewContext, run_checks
+from .mail import EmailConfigError, EmailSettings, build_message, send
 from .models import Snapshot
 from .okta import OktaClient, OktaError
 from .report import write_report
@@ -43,15 +45,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--roster", type=Path, help="HR roster CSV (enables AR-01..AR-03)")
     p.add_argument("--config", type=Path, help="review config JSON")
     p.add_argument("--out", type=Path, default=Path("reports"), help="output directory (default: reports)")
-    p.add_argument("--as-of", type=date.fromisoformat, help="review date, YYYY-MM-DD (default: today)")
+    p.add_argument(
+        "--as-of", type=date.fromisoformat, help="review date, YYYY-MM-DD (default: UTC date the data was collected)"
+    )
     p.add_argument(
         "--fail-on", choices=SEVERITIES,
         help="exit with status 2 if any finding is at this severity or worse",
     )
+    p.add_argument("--no-email", action="store_true", help="don't email the report even if REPORT_EMAIL_TO is set")
     args = p.parse_args(argv)
 
     config = Config.load(args.config)
     roster = load_roster(args.roster) if args.roster else None
+    # Check email settings before the (slow) collection, so mistakes fail fast.
+    try:
+        email = None if args.no_email else EmailSettings.from_env()
+    except (EmailConfigError, ValueError) as e:
+        print(f"access-review: email settings: {e}", file=sys.stderr)
+        return 1
 
     if args.snapshot:
         snapshot = Snapshot.from_dict(json.loads(args.snapshot.read_text()))
@@ -64,7 +75,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"access-review: {e}", file=sys.stderr)
             return 1
 
-    as_of = args.as_of or date.today()
+    # Default to the (UTC) collection date so the review date matches the data.
+    as_of = args.as_of or snapshot.collected_at.date()
     findings, skipped = run_checks(ReviewContext(snapshot, roster, config, as_of))
     run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of)
 
@@ -75,6 +87,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Skipped without a roster: {', '.join(skipped)}")
     if snapshot.gaps:
         print(f"INCOMPLETE: {len(snapshot.gaps)} data gap(s); see the report.")
+
+    if email:
+        try:
+            send(email, build_message(email, snapshot, findings, run_dir))
+        except (OSError, smtplib.SMTPException) as e:
+            print(f"access-review: report saved, but emailing it failed: {e}", file=sys.stderr)
+            return 3
+        print(f"Emailed report.pdf to {', '.join(email.recipients)}")
 
     if args.fail_on:
         limit = SEVERITIES.index(args.fail_on)

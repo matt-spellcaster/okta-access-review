@@ -13,7 +13,9 @@ Read-only Okta user access review that produces SOC 2 / ISO 27001 audit evidence
 - The tool is read-only. `OktaClient` only sends GET requests, plus the token POST. Never add
   write calls, and never request a scope that doesn't end in `.read`.
 - Never commit `env`, key files, `reports/`, or anything in `roster/` except its README.
-- Never read `env` or print `OKTA_PRIVATE_KEY`.
+- Never read `env` or print `OKTA_PRIVATE_KEY` or `SMTP_PASSWORD`.
+- Email bodies contain only counts and completeness; personal data goes only in the PDF attachment.
+  Tests must never send real email (`tests/conftest.py` clears `REPORT_EMAIL_TO`).
 - A new check needs: an entry in `CHECKS` (`checks.py`) with SOC 2 and ISO 27001 control IDs, a planted
   case in `fixtures/demo_snapshot.json`, and an updated expectation in
   `test_demo_findings_are_exactly_the_planted_ones`.

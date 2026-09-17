@@ -48,11 +48,39 @@ Each run writes to `reports/<collection time>/`:
 | `report.md` | Summary, findings grouped by check with control mapping and fix, sign-off block |
 | `findings.csv` | One row per finding, for tracking remediation |
 | `access_matrix.csv` | Every user with status, groups, apps (and how they were granted), MFA, last sign-in, plus blank `decision` / `reviewer` columns for the review |
+| `report.pdf` | The report as a PDF, for sharing and signing |
 | `snapshot.json` | The exact data the checks ran on |
 | `manifest.json` | Run metadata, config, and a SHA-256 hash of every file above, so you can later show the evidence wasn't edited |
 
+A `report.pdf` with the same content plus a sign-off page is also written, and its hash is in
+the manifest.
+
 `--fail-on <severity>` makes the command exit with status 2 if any finding is at that severity
 or worse, so it can gate a scheduled job or CI pipeline.
+
+## Emailing the report
+
+If `REPORT_EMAIL_TO` is set in `env`, each live run ends by emailing `report.pdf` over SMTP.
+
+- **The body has no personal data.** It contains only the finding counts, whether the review
+  is complete, and the PDF's SHA-256 hash so the recipient can match it to `manifest.json`.
+  Names, emails and roles appear only in the attachment.
+- **TLS is required.** Use port 587 (STARTTLS) or 465 (TLS). The tool refuses other ports and
+  servers that don't offer STARTTLS.
+- **The SMTP password lives in 1Password.** `run.sh` fetches it with `op read`, like the Okta key.
+- **Settings are checked first.** A missing setting stops the run before it contacts Okta. If
+  sending fails, the report is still saved and the command exits with status 3.
+- Use `--no-email` to skip sending for one run.
+
+Any SMTP provider works. Typical settings (check your provider's docs):
+
+| Provider | `SMTP_HOST` | `SMTP_USERNAME` | Password in 1Password |
+|---|---|---|---|
+| SendGrid | `smtp.sendgrid.net` | `apikey` | API key with Mail Send permission |
+| Postmark | `smtp.postmarkapp.com` | Server API token | The same server API token |
+| Amazon SES | `email-smtp.<region>.amazonaws.com` | SMTP username | SMTP password |
+
+`REPORT_EMAIL_FROM` must be an address or domain you've verified with the provider.
 
 ## Security design
 

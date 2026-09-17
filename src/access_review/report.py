@@ -13,7 +13,8 @@ from pathlib import Path
 
 from . import __version__
 from .checks import CHECKS, SEVERITIES, Config, Finding
-from .models import Snapshot
+from .models import SIGN_IN_STATUSES, Snapshot
+from .pdf import write_pdf
 
 MATRIX_COLUMNS = [
     "login", "name", "status", "type", "department", "manager", "last_login",
@@ -26,7 +27,15 @@ def access_matrix(snapshot: Snapshot) -> list[dict]:
     for u in sorted(snapshot.users, key=lambda u: u.login):
         groups = sorted(g.name for g in snapshot.groups_for(u.id) if g.type != "BUILT_IN")
         apps = sorted({f"{app.label} ({how})" for app, how in snapshot.apps_for(u.id)})
-        mfa = "unknown" if u.factors is None else (", ".join(u.factors) or "none")
+        # Factors are only collected for users who can sign in, and roles for users who aren't deprovisioned.
+        if u.status not in SIGN_IN_STATUSES:
+            mfa = "n/a"
+        else:
+            mfa = "unknown" if u.factors is None else (", ".join(u.factors) or "none")
+        if u.status == "DEPROVISIONED":
+            admin_roles = "n/a"
+        else:
+            admin_roles = "unknown" if u.admin_roles is None else "; ".join(u.admin_roles)
         rows.append({
             "login": u.login,
             "name": u.name,
@@ -36,7 +45,7 @@ def access_matrix(snapshot: Snapshot) -> list[dict]:
             "manager": u.manager,
             "last_login": u.last_login.date().isoformat() if u.last_login else "never",
             "mfa": mfa,
-            "admin_roles": "unknown" if u.admin_roles is None else "; ".join(u.admin_roles),
+            "admin_roles": admin_roles,
             "groups": "; ".join(groups),
             "apps": "; ".join(apps),
             # Filled in by the reviewer: keep | revoke | modify
@@ -137,7 +146,9 @@ def write_report(
     (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of))
     finding_rows = [{**asdict(f), "controls": "; ".join(f.controls)} for f in findings]
     _write_csv(run_dir / "findings.csv", finding_rows, list(Finding.__dataclass_fields__))
-    _write_csv(run_dir / "access_matrix.csv", access_matrix(snapshot), MATRIX_COLUMNS)
+    matrix = access_matrix(snapshot)
+    _write_csv(run_dir / "access_matrix.csv", matrix, MATRIX_COLUMNS)
+    write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix)
     (run_dir / "snapshot.json").write_text(json.dumps(snapshot.to_dict(), indent=2) + "\n")
 
     manifest = {

@@ -7,13 +7,17 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.32",
     "pyjwt[crypto]>=2.9",
+    "reportlab>=5.0.1",
 ]
 
 [project.scripts]
 access-review = "access_review.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pypdf>=6.18.1",
+    "pytest>=8",
+]
 
 [build-system]
 requires = ["hatchling"]
