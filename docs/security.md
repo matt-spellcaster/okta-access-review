@@ -70,6 +70,13 @@ that it can see its own app. If it can't, the app list is marked as filtered.
   confidential HR data.
 - **Email and Slack messages contain only counts and completeness.** Names and details are only in
   the PDF.
+- **System Log events are stripped before they are stored.** A raw Okta event carries far more than
+  a review needs: `app.oauth2.credentials.lifecycle.create` includes the **new client secret in
+  plain text**, and most events carry the actor's IP address, city and device. `ActivityEvent`
+  copies six fields and nothing else -- timestamp, event type, actor id and type, outcome, and each
+  target's id, type and label. It is an allowlist, so a new field Okta adds is dropped by default,
+  and a test asserts that none of the discarded sections reach a snapshot. This matters because
+  `snapshot.json` is written into every report folder and the demo one is committed.
 - **Uploading the PDF to Slack is opt-in** and is meant for a private, need-to-know channel. The
   upload only goes to a URL on `slack.com`.
 - Webhook URLs, bot tokens and Slack's pre-signed upload URLs never appear in output or error
@@ -88,3 +95,6 @@ that it can see its own app. If it can't, the app list is marked as filtered.
   processes running as the same macOS user could read them.
 - The review app's Super Administrator role is a standing privilege; it relies on scopes, the key
   in 1Password, DPoP and AR-10 as controls.
+- Okta keeps 90 days of System Log data, so AR-13 cannot see activity after a termination older
+  than that. The review reports it as a gap rather than as a clean result, but the answer for an
+  older leaver is still "unknown", not "nothing happened".

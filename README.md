@@ -4,7 +4,8 @@ A read-only command-line tool that runs a user access review on an Okta org. It 
 groups, apps, MFA enrollment and admin roles with an HR roster, flags access to remove or confirm, and
 saves the results as evidence for SOC 2 (CC6.1–CC6.3) and ISO 27001:2022 (A.5.15–A.8.5).
 
-- 11 checks, such as terminated users with live accounts, missing MFA, and API clients with write access.
+- 13 checks, such as leavers who still hold a working API credential, terminated users with live
+  accounts, missing MFA, and API clients with write access.
 - Read-only scopes, Private Key JWT, and DPoP-bound tokens.
 - Output: a PDF with a sign-off page, CSVs, the raw data, and a manifest of SHA-256 hashes.
 - The report is marked incomplete if Okta withholds any data.
@@ -55,10 +56,18 @@ those and nothing else.
 | AR-09 | Suspended or deprovisioned, but still in groups or apps | medium | SOC 2 CC6.2 · ISO A.5.18 |
 | AR-10 | Service app with write scopes or an admin role that can make changes (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
 | AR-11 | Admin user, for the reviewer to confirm | info | SOC 2 CC6.3 · ISO A.8.2 |
+| AR-12 | Leaver still holds an API token, or an API client they set up | critical | SOC 2 CC6.2, CC6.3 · ISO A.5.18 |
+| AR-13 | Signed in, or used a credential, after their last working day | critical | SOC 2 CC6.2, CC7.2 · ISO A.5.18, A.8.16 |
 
-AR-01 to AR-03 compare Okta with an HR roster: a CSV exported from the HR system and passed in with
-`--roster` (there's no live HR integration yet). Without it they're skipped, and the report says so.
-Thresholds and group names are configurable.
+AR-01 to AR-03, AR-12 and AR-13 compare Okta with an HR roster: a CSV exported from the HR system
+and passed in with `--roster` (there's no live HR integration yet). Without it they're skipped, and
+the report says so. Thresholds and group names are configurable.
+
+AR-12 and AR-13 are about the leaver cases an account status doesn't show. An Okta API token keeps
+working after the account is deactivated, and so does an API client the leaver set up, on its own
+credentials. AR-13 reads the System Log to say whether any of it was actually used after their last
+working day. Okta keeps 90 days of log data, so a termination older than that is reported as a gap
+rather than as nothing to see.
 
 ## Evidence produced
 

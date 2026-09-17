@@ -15,6 +15,8 @@
    | `okta.apps.read` | Apps and their user and group assignments |
    | `okta.appGrants.read` | API scopes granted to other apps (AR-10) |
    | `okta.roles.read` | Admin roles of users and API apps (AR-10, AR-11) |
+| `okta.logs.read` | System Log: what a leaver did after they left (AR-12, AR-13) |
+| `okta.apiTokens.read` | API tokens and who owns them (AR-12) |
 
 4. **Admin roles:** Super Administrator for full coverage, or Read-Only Administrator for a review
    that skips admin roles. See [the tradeoff](security.md#admin-role-a-tested-tradeoff).
@@ -45,6 +47,7 @@ A JSON file. Every key is optional, and unknown keys are rejected.
 | `employee_only_groups` | `[]` | Groups contractors shouldn't be in (AR-07) |
 | `admin_groups` | `["Okta Administrators"]` | Groups treated as admin access (AR-11) |
 | `service_accounts` | `[]` | Logins expected to be missing from the HR roster (AR-03) |
+| `activity_lookback_days` | `90` | How far back to read the System Log (AR-12, AR-13); Okta keeps 90 days |
 | `branding` | none | PDF branding, below |
 
 Example: [`fixtures/demo_config.json`](../fixtures/demo_config.json).
@@ -93,7 +96,7 @@ can then see exactly which HR data a review was compared against.
 | Option | Meaning |
 |---|---|
 | `--snapshot FILE` | Review a saved snapshot instead of calling Okta |
-| `--roster FILE` | HR roster; enables AR-01 to AR-03 |
+| `--roster FILE` | HR roster; enables AR-01 to AR-03, AR-12 and AR-13 |
 | `--config FILE` | Review config |
 | `--out DIR` | Output folder (default `reports/`) |
 | `--as-of DATE` | Review date (default: UTC date the data was collected) |
