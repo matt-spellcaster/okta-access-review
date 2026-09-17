@@ -19,5 +19,7 @@ Read-only Okta user access review that produces SOC 2 / ISO 27001 audit evidence
 - A new check needs: an entry in `CHECKS` (`checks.py`) with SOC 2 and ISO 27001 control IDs, a planted
   case in `fixtures/demo_snapshot.json`, and an updated expectation in
   `test_demo_findings_are_exactly_the_planted_ones`.
+- After changing the PDF layout or demo fixtures, run `uv run python scripts/render_samples.py`
+  and look at `docs/images/*.png` before committing. The README sample must only ever use fixture data.
 - Keep the snapshot format (`models.py`) the same for live and fixture data; checks only see `Snapshot`.
 - Python 3.11+, dependencies pinned by `uv.lock` and `exclude-newer` in `pyproject.toml`.

@@ -16,6 +16,7 @@ access-review = "access_review.cli:main"
 [dependency-groups]
 dev = [
     "pypdf>=6.18.1",
+    "pypdfium2>=5.13.0",
     "pytest>=8",
 ]
 

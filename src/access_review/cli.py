@@ -55,7 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-email", action="store_true", help="don't email the report even if REPORT_EMAIL_TO is set")
     args = p.parse_args(argv)
 
-    config = Config.load(args.config)
+    try:
+        config = Config.load(args.config)
+    except (ValueError, OSError) as e:
+        print(f"access-review: config {args.config}: {e}", file=sys.stderr)
+        return 1
     roster = load_roster(args.roster) if args.roster else None
     # Check email settings before the (slow) collection, so mistakes fail fast.
     try:

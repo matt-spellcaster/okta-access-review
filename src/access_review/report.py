@@ -14,7 +14,7 @@ from pathlib import Path
 from . import __version__
 from .checks import CHECKS, SEVERITIES, Config, Finding
 from .models import SIGN_IN_STATUSES, Snapshot
-from .pdf import write_pdf
+from .pdf import Branding, write_pdf
 
 MATRIX_COLUMNS = [
     "login", "name", "status", "type", "department", "manager", "last_login",
@@ -148,7 +148,7 @@ def write_report(
     _write_csv(run_dir / "findings.csv", finding_rows, list(Finding.__dataclass_fields__))
     matrix = access_matrix(snapshot)
     _write_csv(run_dir / "access_matrix.csv", matrix, MATRIX_COLUMNS)
-    write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix)
+    write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix, Branding.from_config(config.branding))
     (run_dir / "snapshot.json").write_text(json.dumps(snapshot.to_dict(), indent=2) + "\n")
 
     manifest = {

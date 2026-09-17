@@ -35,6 +35,8 @@ class Config:
     admin_groups: list[str] = field(default_factory=lambda: ["Okta Administrators"])
     # Logins that are expected to be missing from the HR roster.
     service_accounts: list[str] = field(default_factory=list)
+    # PDF look; see pdf.Branding. Empty means the plain layout.
+    branding: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path | None) -> Config:
@@ -44,7 +46,11 @@ class Config:
         unknown = set(data) - set(cls.__dataclass_fields__)
         if unknown:
             raise ValueError(f"unknown config keys: {', '.join(sorted(unknown))}")
-        return cls(**data)
+        config = cls(**data)
+        from .pdf import Branding  # late import: pdf imports this module
+
+        Branding.from_config(config.branding)  # fail fast on bad colors or keys
+        return config
 
 
 @dataclass

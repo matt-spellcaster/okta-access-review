@@ -8,6 +8,22 @@ A periodic user access review is a standard SOC 2 control (CC6.2/CC6.3), and in 
 it's still done by hand in spreadsheets. This tool does the data gathering and the obvious checks,
 so the reviewer only has to decide on the flagged items and sign off.
 
+## Sample report
+
+Each run produces a PDF like this one. The data is from the demo company Acme, and every name in
+it is made up.
+
+![Page 1 of the sample report: summary and findings by severity](docs/images/report-page-1.png)
+
+<details>
+<summary>Page 2: control mapping and access by user</summary>
+
+![Page 2 of the sample report: remediation, SOC 2 and ISO 27001 control mapping, and access by user](docs/images/report-page-2.png)
+
+</details>
+
+[Open the full sample PDF](docs/sample-report.pdf), which also has the reviewer sign-off page.
+
 ## Try it without Okta
 
 ```bash
@@ -54,6 +70,27 @@ Each run writes to `reports/<collection time>/`:
 
 A `report.pdf` with the same content plus a sign-off page is also written, and its hash is in
 the manifest.
+
+### PDF branding
+
+Add a `branding` section to the config file to put a company brand on the PDF. The demo uses
+**Acme**, a made-up company whose logo is drawn in code, so there are no image files:
+
+```json
+"branding": {
+  "name": "Acme",
+  "tagline": "Security & Compliance",
+  "primary": "#0B2545",
+  "accent": "#F2A541",
+  "footer": "Confidential",
+  "logo": "acme"
+}
+```
+
+`primary` colors the header band, title and headings, and `accent` colors the logo tile and the
+line under the band. Colors must be `#rrggbb`. Severity colors are fixed so they mean the same
+thing in every report. Without `branding`, the PDF uses a plain layout. Invalid branding stops the
+run before it contacts Okta.
 
 `--fail-on <severity>` makes the command exit with status 2 if any finding is at that severity
 or worse, so it can gate a scheduled job or CI pipeline.
@@ -174,4 +211,11 @@ bo@example.com,Bo Kim,employee,terminated,2026-08-01,Sam Lee
 
 ```bash
 uv run pytest -q
+```
+
+If you change the PDF layout or the demo data, regenerate the README sample. A test fails if
+`docs/sample-report.pdf` is out of date.
+
+```bash
+uv run python scripts/render_samples.py
 ```
