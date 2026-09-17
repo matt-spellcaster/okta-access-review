@@ -10,6 +10,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from . import slack
 from .checks import SEVERITIES, Config, ReviewContext, run_checks
 from .mail import EmailConfigError, EmailSettings, build_message, send
 from .models import Snapshot
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         help="exit with status 2 if any finding is at this severity or worse",
     )
     p.add_argument("--no-email", action="store_true", help="don't email the report even if REPORT_EMAIL_TO is set")
+    p.add_argument("--no-slack", action="store_true", help="don't post to Slack even if Slack is configured")
     args = p.parse_args(argv)
 
     try:
@@ -61,11 +63,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"access-review: config {args.config}: {e}", file=sys.stderr)
         return 1
     roster = load_roster(args.roster) if args.roster else None
-    # Check email settings before the (slow) collection, so mistakes fail fast.
+    # Check notification settings before the (slow) collection, so mistakes fail fast.
     try:
         email = None if args.no_email else EmailSettings.from_env()
     except (EmailConfigError, ValueError) as e:
         print(f"access-review: email settings: {e}", file=sys.stderr)
+        return 1
+    try:
+        slack_settings = None if args.no_slack else slack.settings_from_env()
+    except slack.SlackConfigError as e:
+        print(f"access-review: Slack settings: {e}", file=sys.stderr)
         return 1
 
     if args.snapshot:
@@ -92,13 +99,27 @@ def main(argv: list[str] | None = None) -> int:
     if snapshot.gaps:
         print(f"INCOMPLETE: {len(snapshot.gaps)} data gap(s); see the report.")
 
+    # Try every notification even if one fails; the report is already saved.
+    notify_failed = False
     if email:
         try:
             send(email, build_message(email, snapshot, findings, run_dir))
+            print(f"Emailed report.pdf to {', '.join(email.recipients)}")
         except (OSError, smtplib.SMTPException) as e:
             print(f"access-review: report saved, but emailing it failed: {e}", file=sys.stderr)
-            return 3
-        print(f"Emailed report.pdf to {', '.join(email.recipients)}")
+            notify_failed = True
+    if slack_settings:
+        brand = config.branding.get("name", "")
+        try:
+            payload = slack.build_payload(snapshot, findings, run_dir, brand=brand)
+            title = f"{brand} · Okta access review" if brand else "Okta access review"
+            for line in slack.notify(slack_settings, payload, run_dir, title=title):
+                print(line)
+        except slack.SlackError as e:
+            print(f"access-review: report saved, but posting to Slack failed: {e}", file=sys.stderr)
+            notify_failed = True
+    if notify_failed:
+        return 3
 
     if args.fail_on:
         limit = SEVERITIES.index(args.fail_on)

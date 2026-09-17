@@ -23,6 +23,7 @@ it is made up.
 </details>
 
 [Open the full sample PDF](docs/sample-report.pdf), which also has the reviewer sign-off page.
+Runs can also [email the PDF](#emailing-the-report) and [post a summary to Slack](#posting-to-slack).
 
 ## Try it without Okta
 
@@ -118,6 +119,44 @@ Any SMTP provider works. Typical settings (check your provider's docs):
 | Amazon SES | `email-smtp.<region>.amazonaws.com` | SMTP username | SMTP password |
 
 `REPORT_EMAIL_FROM` must be an address or domain you've verified with the provider.
+
+## Posting to Slack
+
+Each live run can also post a summary to a Slack channel, with the PDF in the thread if you want it:
+
+![Slack summary of the Acme demo review, with the PDF report attached in the thread](docs/images/slack-summary.png)
+
+There are two ways to connect:
+
+| | Incoming webhook | Bot token |
+|---|---|---|
+| Settings in `env` | `SLACK_WEBHOOK_URL_REF` | `SLACK_BOT_TOKEN_REF`, `SLACK_CHANNEL_ID`, `SLACK_ATTACH_PDF` |
+| Posts the summary | yes | yes |
+| Attaches `report.pdf` | no (webhooks can't upload files) | optional, as a reply in the summary's thread |
+| Slack setup | Incoming Webhooks → add a webhook | OAuth & Permissions → bot scopes `chat:write` and `files:write` → reinstall → `/invite` the app |
+
+- **Webhook URLs and bot tokens are secrets.** `env` holds only 1Password references, `run.sh`
+  fetches the values at startup, and the tool never prints them, even in error messages.
+  `run.sh` also rejects any `*_REF` setting that isn't an `op://` reference, without printing it,
+  so a secret pasted there by mistake doesn't end up in terminal output.
+- **Attaching the PDF is opt-in** (`SLACK_ATTACH_PDF="true"`), because the PDF contains personal
+  data. Only turn it on for a private, need-to-know channel. The file is uploaded with Slack's
+  three-step upload flow, and only to an upload URL on `slack.com`.
+- **Wrong settings fail fast.** Examples: a user token instead of a bot token, a channel name
+  instead of an ID, both a webhook and a token, or attaching the PDF with a webhook. Slack API
+  errors come with a hint, e.g. `not_in_channel` suggests `/invite`.
+- **Only Slack webhook URLs are accepted** (`https://hooks.slack.com/services/...`). Anything else
+  stops the run before it contacts Okta, so a wrong value can't send data somewhere else.
+- **Readable at a glance.** The message has a colored side bar for the worst severity (green when
+  clean), the brand name, whether the review is complete, the collection time in each reader's time
+  zone, a grid of counts by severity, and a "What needs attention" list with one line per check.
+- **No personal data in the summary.** The attention list names checks, not people or apps.
+- **Email and Slack are independent.** If one fails, the other is still attempted, the report is
+  kept, and the command exits with status 3. Use `--no-slack` to skip posting for one run.
+
+Setup: create an app at https://api.slack.com/apps, configure it as shown in the table, and save
+the webhook URL or bot token in 1Password. The channel ID is at the bottom of the channel's
+**About** tab; it isn't secret, so it goes in `env` directly.
 
 ## Security design
 

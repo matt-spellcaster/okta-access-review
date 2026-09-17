@@ -23,6 +23,6 @@ def test_sample_pdf_is_up_to_date(tmp_path):
 
 def test_readme_images_exist():
     readme = (ROOT / "README.md").read_text()
-    for name in ("report-page-1.png", "report-page-2.png"):
+    for name in ("report-page-1.png", "report-page-2.png", "slack-summary.png"):
         assert f"docs/images/{name}" in readme
         assert (ROOT / "docs" / "images" / name).stat().st_size > 10_000
