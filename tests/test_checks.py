@@ -62,6 +62,22 @@ def test_api_client_with_only_write_scopes_is_medium(demo):
     assert "Read-Only" not in f.detail
 
 
+def test_view_only_roles_alone_are_not_flagged(demo):
+    bot = next(a for a in demo.snapshot.apps if a.label == "Reporting Bot")
+    bot.admin_roles = ["Read-Only Administrator", "Report Administrator"]
+    findings, _ = run_checks(demo)
+    assert not [f for f in findings if f.subject == "Reporting Bot"]
+
+
+def test_view_only_roles_are_left_out_of_the_detail(demo):
+    bot = next(a for a in demo.snapshot.apps if a.label == "Reporting Bot")
+    bot.admin_roles = ["Report Administrator", "mcp-role"]
+    bot.granted_scopes = ["okta.users.manage"]
+    findings, _ = run_checks(demo)
+    [f] = [f for f in findings if f.subject == "Reporting Bot"]
+    assert f.detail == "API client has admin roles: mcp-role; write scope: okta.users.manage."
+
+
 def test_user_facing_app_with_write_scopes_is_ignored(demo):
     findings, _ = run_checks(demo)
     assert not [f for f in findings if f.subject == "Okta Dashboard"]

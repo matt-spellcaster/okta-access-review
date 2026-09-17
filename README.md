@@ -63,7 +63,7 @@ those and nothing else.
 | AR-07 | Contractor in an employee-only group | medium | SOC 2 CC6.3 · ISO A.5.15 |
 | AR-08 | Missing manager or department | low | SOC 2 CC6.2 · ISO A.5.16 |
 | AR-09 | Suspended or deprovisioned, but still in groups or apps | medium | SOC 2 CC6.2 · ISO A.5.18 |
-| AR-10 | Service app with write scopes or an admin role (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
+| AR-10 | Service app with write scopes or an admin role that can make changes (high if Super Administrator) | medium | SOC 2 CC6.3 · ISO A.8.2 |
 | AR-11 | Admin user, for the reviewer to confirm | info | SOC 2 CC6.3 · ISO A.8.2 |
 
 AR-01 to AR-03 need the HR roster. Without it they're skipped, and the report says so.

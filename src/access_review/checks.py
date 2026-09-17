@@ -17,7 +17,7 @@ from .roster import RosterEntry
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
 # Built-in roles that can view but not change anything.
-READ_ONLY_ROLES = {"read-only administrator"}
+READ_ONLY_ROLES = {"read-only administrator", "report administrator"}
 # The full list is in snapshot.json; the finding shows the most important ones.
 MAX_SCOPES_SHOWN = 5
 HIGH_RISK_SCOPES = [
