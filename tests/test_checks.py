@@ -16,8 +16,8 @@ AS_OF = date(2026, 9, 15)
 @pytest.fixture
 def demo():
     snapshot = Snapshot.from_dict(json.loads((FIXTURES / "demo_snapshot.json").read_text()))
-    roster = load_roster(FIXTURES / "demo_roster.csv")
     config = Config.load(FIXTURES / "demo_config.json")
+    roster = load_roster(FIXTURES / "demo_roster.csv", config.timezone())
     return ReviewContext(snapshot, roster, config, AS_OF)
 
 

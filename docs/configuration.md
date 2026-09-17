@@ -48,6 +48,7 @@ A JSON file. Every key is optional, and unknown keys are rejected.
 | `admin_groups` | `["Okta Administrators"]` | Groups treated as admin access (AR-11) |
 | `service_accounts` | `[]` | Logins expected to be missing from the HR roster (AR-03) |
 | `activity_lookback_days` | `90` | How far back to read the System Log (AR-12, AR-13); Okta keeps 90 days |
+| `org_timezone` | `"America/Chicago"` | Where the org is, for resolving an `end_date` with no time on it (AR-13) |
 | `branding` | none | PDF branding, below |
 
 Example: [`fixtures/demo_config.json`](../fixtures/demo_config.json).
@@ -79,11 +80,25 @@ email,name,employment_type,status,end_date,manager
 ana@example.com,Ana Diaz,employee,active,,Sam Lee
 raj@example.com,Raj Rao,contractor,active,2026-12-31,Sam Lee
 bo@example.com,Bo Kim,employee,terminated,2026-08-01,Sam Lee
+cy@example.com,Cy Okoro,employee,terminated,2026-08-29T14:05:00,Sam Lee
 ```
 
 - `employment_type`: `employee` or `contractor`
 - `status`: `active`, `leave` or `terminated`
-- `end_date`: termination date or contract end date (optional)
+- `end_date`: termination date or contract end date (optional). Either a date, or an ISO timestamp
+  if the HR system records the moment access was meant to stop.
+
+### What `end_date` means to AR-13
+
+AR-13 reports activity *after* someone left, so it needs to know when that was, to the minute.
+
+- **A date** means the whole day was theirs to work. The cutoff is the end of that day in
+  `org_timezone`, so someone working a late last evening isn't reported as an incident.
+- **A timestamp** is used exactly as given. Prefer it for an involuntary termination, where the
+  difference between 2pm and end of day is the whole point of the check. A timestamp with no UTC
+  offset is read in `org_timezone`.
+
+Everything else, including AR-02, only compares dates, so a timestamp changes nothing there.
 
 Keep real rosters in `roster/`, which is git-ignored.
 

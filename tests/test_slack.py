@@ -43,9 +43,10 @@ def demo_run(tmp_path):
     assert cli.main(DEMO_ARGS + ["--out", str(tmp_path), "--no-email", "--no-slack"]) == 0
     [run_dir] = list(tmp_path.iterdir())
     snapshot = Snapshot.from_dict(json.loads((run_dir / "snapshot.json").read_text()))
+    config = cli.Config.load(FIXTURES / "demo_config.json")
     findings, _ = cli.run_checks(cli.ReviewContext(
-        snapshot, cli.load_roster(FIXTURES / "demo_roster.csv"),
-        cli.Config.load(FIXTURES / "demo_config.json"), cli.date(2026, 9, 15),
+        snapshot, cli.load_roster(FIXTURES / "demo_roster.csv", config.timezone()),
+        config, cli.date(2026, 9, 15),
     ))
     return run_dir, snapshot, findings
 

@@ -1,9 +1,12 @@
 """Activity evidence: the System Log projection and the leaver checks that read it."""
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 from access_review.models import ActivityEvent, ApiToken, App, Snapshot
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 # Shaped like a real app.oauth2.credentials.lifecycle.create event, which is the
 # worst case: Okta puts the new client secret in target[].detailEntry in plain
@@ -137,12 +140,13 @@ def test_events_for_actor_filters_and_orders_oldest_first():
 
 # --- the checks ------------------------------------------------------------
 
-def _ctx(events=(), tokens=(), end_date="2026-08-29", status="terminated", user_status="ACTIVE"):
+def _ctx(events=(), tokens=(), end_date="2026-08-29", status="terminated", user_status="ACTIVE",
+         tz="America/Chicago"):
     from datetime import date
 
     from access_review.checks import Config, ReviewContext
     from access_review.models import Group, User
-    from access_review.roster import RosterEntry
+    from access_review.roster import RosterEntry, _parse_end
 
     user = User(id="u02", login="marcus.lee@acme.example", status=user_status,
                 profile={"email": "marcus.lee@acme.example", "manager": "Priya", "department": "Eng"})
@@ -155,10 +159,11 @@ def _ctx(events=(), tokens=(), end_date="2026-08-29", status="terminated", user_
         api_tokens=list(tokens),
         events=list(events),
     )
+    config = Config(org_timezone=tz)
+    ends, ends_at = _parse_end(end_date or "", config.timezone(), "marcus.lee@acme.example")
     roster = {"marcus.lee@acme.example": RosterEntry(
-        "marcus.lee@acme.example", "Marcus Lee", "employee", status,
-        date.fromisoformat(end_date) if end_date else None, "Priya")}
-    return ReviewContext(snapshot, roster, Config(), date(2026, 9, 15))
+        "marcus.lee@acme.example", "Marcus Lee", "employee", status, ends, "Priya", end_at=ends_at)}
+    return ReviewContext(snapshot, roster, config, date(2026, 9, 15))
 
 
 def _findings(ctx, check_id):
@@ -264,3 +269,115 @@ def test_no_findings_when_activity_was_never_collected():
     """Without the logs scope there are no events. Saying nothing is right here;
     the collector has already recorded the gap."""
     assert _findings(_ctx(events=[]), "AR-13") == []
+
+
+# --- when access actually ended --------------------------------------------
+
+def _at(when, tz_offset_hours):
+    from datetime import timedelta
+    return ActivityEvent(published=when.replace(tzinfo=timezone(timedelta(hours=tz_offset_hours))),
+                         event_type="user.authentication.sso", actor_id="u02",
+                         targets=[{"id": "a02", "type": "AppInstance", "label": "Salesforce"}])
+
+
+def test_a_bare_end_date_gives_them_the_whole_last_day_in_the_org_timezone():
+    """Resolving end-of-day in UTC flagged a US employee's last evening as an
+    incident. The day belongs to the org's timezone, not the server's."""
+    last_evening = _at(datetime(2026, 8, 29, 18, 0), -7)  # 6pm Pacific, still their last day
+
+    assert _findings(_ctx(events=[last_evening]), "AR-13") == []
+
+
+def test_the_next_morning_is_still_reported():
+    assert _findings(_ctx(events=[_at(datetime(2026, 8, 30, 10, 0), -7)]), "AR-13") != []
+
+
+def test_the_org_timezone_moves_the_boundary():
+    """The same event, the same end date, two orgs. Sydney's last day ends earlier in UTC."""
+    evening = _at(datetime(2026, 8, 29, 18, 0), -7)
+
+    assert _findings(_ctx(events=[evening], tz="America/Chicago"), "AR-13") == []
+    assert _findings(_ctx(events=[evening], tz="Australia/Sydney"), "AR-13") != []
+
+
+def test_an_hr_timestamp_is_used_exactly():
+    """The involuntary case: HR knows the minute access was meant to stop."""
+    after = _at(datetime(2026, 8, 29, 16, 0), -5)  # 4pm CT, after the 2:05pm cutoff
+
+    [f] = _findings(_ctx(events=[after], end_date="2026-08-29T14:05:00"), "AR-13")
+
+    assert f.detail.startswith("1 sign-in after 2026-08-29 14:05 CDT;")
+
+
+def test_activity_before_an_hr_timestamp_is_not_reported():
+    before = _at(datetime(2026, 8, 29, 13, 0), -5)  # 1pm CT, before the 2:05pm cutoff
+
+    assert _findings(_ctx(events=[before], end_date="2026-08-29T14:05:00"), "AR-13") == []
+
+
+def test_a_timestamp_with_an_offset_keeps_it():
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from access_review.roster import _parse_end
+
+    _, at = _parse_end("2026-08-29T22:30:00Z", ZoneInfo("America/Chicago"), "x@y.z")
+
+    assert at.utcoffset() == timedelta(0)
+
+
+def test_a_timestamp_without_an_offset_is_local_to_the_org():
+    """Not UTC, and not whichever machine happens to run the review."""
+    from zoneinfo import ZoneInfo
+
+    from access_review.roster import _parse_end
+
+    _, chicago = _parse_end("2026-08-29T17:30:00", ZoneInfo("America/Chicago"), "x@y.z")
+    _, sydney = _parse_end("2026-08-29T17:30:00", ZoneInfo("Australia/Sydney"), "x@y.z")
+
+    assert chicago != sydney
+
+
+def test_a_bare_date_is_not_read_as_midnight():
+    """datetime.fromisoformat accepts a date and returns 00:00, which would flag
+    the whole last working day. The date parse has to be tried first."""
+    from zoneinfo import ZoneInfo
+
+    from access_review.roster import _parse_end
+
+    assert _parse_end("2026-08-29", ZoneInfo("America/Chicago"), "x@y.z") == (date(2026, 8, 29), None)
+
+
+def test_an_unreadable_end_date_names_the_row():
+    import pytest
+    from zoneinfo import ZoneInfo
+
+    from access_review.roster import RosterError, _parse_end
+
+    with pytest.raises(RosterError, match="bo@x.test.*'last tuesday'"):
+        _parse_end("last tuesday", ZoneInfo("America/Chicago"), "bo@x.test")
+
+
+def test_a_bad_roster_exits_cleanly_instead_of_crashing(tmp_path, capsys):
+    from access_review import cli
+
+    roster = tmp_path / "roster.csv"
+    roster.write_text("email,status,end_date\nbo@x.test,terminated,last tuesday\n")
+
+    code = cli.main(["--snapshot", str(FIXTURES / "demo_snapshot.json"), "--roster", str(roster),
+                     "--out", str(tmp_path / "out"), "--no-email", "--no-slack"])
+
+    assert code == 1
+    assert "last tuesday" in capsys.readouterr().err
+
+
+def test_an_unknown_org_timezone_is_rejected_at_config_load(tmp_path):
+    import pytest
+
+    from access_review.checks import Config
+
+    path = tmp_path / "c.json"
+    path.write_text('{"org_timezone": "Mars/Olympus"}')
+
+    with pytest.raises(ValueError, match="Mars/Olympus"):
+        Config.load(path)

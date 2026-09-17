@@ -16,7 +16,7 @@ from .mail import EmailConfigError, EmailSettings, build_message, send
 from .models import Snapshot
 from .okta import OktaClient, OktaError
 from .report import write_report
-from .roster import load_roster
+from .roster import RosterError, load_roster
 
 REQUIRED_ENV = ["OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_KEY_ID", "OKTA_PRIVATE_KEY"]
 DEFAULT_SCOPES = (
@@ -65,7 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as e:
         print(f"access-review: config {args.config}: {e}", file=sys.stderr)
         return 1
-    roster = load_roster(args.roster) if args.roster else None
+    try:
+        roster = load_roster(args.roster, config.timezone()) if args.roster else None
+    except (RosterError, OSError, KeyError) as e:
+        print(f"access-review: roster {args.roster}: {e}", file=sys.stderr)
+        return 1
     # Check notification settings before the (slow) collection, so mistakes fail fast.
     try:
         email = None if args.no_email else EmailSettings.from_env()

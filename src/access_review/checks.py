@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import (
     CREDENTIAL_EVENTS,
@@ -46,6 +47,8 @@ class Config:
     service_accounts: list[str] = field(default_factory=list)
     # How far back to read the System Log (AR-12, AR-13). Okta keeps 90 days.
     activity_lookback_days: int = 90
+    # Where the org is, for resolving an end_date with no time on it (AR-13).
+    org_timezone: str = "America/Chicago"
     # PDF look; see pdf.Branding. Empty means the plain layout.
     branding: dict = field(default_factory=dict)
 
@@ -58,10 +61,17 @@ class Config:
         if unknown:
             raise ValueError(f"unknown config keys: {', '.join(sorted(unknown))}")
         config = cls(**data)
+        config.timezone()  # fail fast on an unknown timezone
         from .pdf import Branding  # late import: pdf imports this module
 
         Branding.from_config(config.branding)  # fail fast on bad colors or keys
         return config
+
+    def timezone(self) -> ZoneInfo:
+        try:
+            return ZoneInfo(self.org_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"unknown org_timezone {self.org_timezone!r}: {e}") from None
 
 
 @dataclass
@@ -292,15 +302,14 @@ def _count(n: int, noun: str) -> str:
 def _activity_after_leaving(ctx: ReviewContext, check: Check) -> list[Finding]:
     out = []
     for user, entry in _leavers(ctx):
-        if entry.end_date is None:
+        cutoff = entry.access_ends(ctx.config.timezone())
+        if cutoff is None:
             out.append(check.finding(
                 user.login,
                 "HR shows terminated with no end date, so activity after they left cannot be identified.",
                 severity="info",
             ))
             continue
-        # The end date is their last working day, so only what follows it counts.
-        cutoff = datetime.combine(entry.end_date, time.max, tzinfo=timezone.utc)
         actors = {user.id} | set(_clients_set_up_by(ctx.snapshot, user.id))
         after = sorted(
             (e for a in actors for e in ctx.snapshot.events_for_actor(a) if e.published and e.published > cutoff),
@@ -318,9 +327,10 @@ def _activity_after_leaving(ctx: ReviewContext, check: Check) -> list[Finding]:
             continue
         last = after[-1]
         where = next((t["label"] for t in last.targets if t.get("label")), last.event_type)
+        left = cutoff.strftime("%Y-%m-%d %H:%M %Z") if entry.end_at else str(entry.end_date)
         out.append(check.finding(
             user.login,
-            f"{', '.join(parts)} after {entry.end_date}; last {last.published.date()} ({where}).",
+            f"{', '.join(parts)} after {left}; last {last.published.date()} ({where}).",
         ))
     return out
 
