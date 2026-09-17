@@ -59,6 +59,10 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
                     roster: str = "not provided") -> str:
     counts = Counter(f.severity for f in findings)
     live = sum(1 for u in snapshot.users if u.status != "DEPROVISIONED")
+    activity = (
+        snapshot.activity_since.strftime("%Y-%m-%d") if snapshot.activity_since
+        else "not collected (AR-12 and AR-13 have no evidence to read)"
+    )
     lines = [
         "# Okta user access review",
         "",
@@ -67,6 +71,7 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
         f"- **Review date:** {as_of.isoformat()}",
         f"- **Scope:** {len(snapshot.users)} users ({live} not deprovisioned), "
         f"{len(snapshot.groups)} groups, {len(snapshot.apps)} apps",
+        f"- **Activity checked from:** {activity}",
         f"- **HR roster:** {roster}",
         f"- **Tool:** okta-access-review {__version__} (read-only)",
         "",
@@ -149,7 +154,7 @@ def roster_record(roster_path: Path | None) -> dict | None:
 
 def roster_label(roster: dict | None) -> str:
     if roster is None:
-        return "not provided (AR-01 to AR-03 skipped)"
+        return "not provided (AR-01 to AR-03, AR-12 and AR-13 skipped)"
     return f"{roster['source_name']}, {roster['rows']} people, SHA-256 {roster['sha256'][:12]}"
 
 
@@ -191,6 +196,7 @@ def write_report(
         "roster": roster,
         "finding_counts": dict(Counter(f.severity for f in findings)),
         "skipped_checks": skipped,
+        "activity_since": snapshot.to_dict()["activity_since"],
         "complete": not snapshot.gaps,
         "data_gaps": snapshot.gaps,
         "files": {

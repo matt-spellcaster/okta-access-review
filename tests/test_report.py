@@ -29,7 +29,7 @@ def test_writes_evidence_with_matching_hashes(tmp_path):
     }
     for name, digest in manifest["files"].items():
         assert hashlib.sha256((d / name).read_bytes()).hexdigest() == digest
-    assert manifest["finding_counts"]["critical"] == 1
+    assert manifest["finding_counts"]["critical"] == 5
 
 
 def test_access_matrix_shows_group_and_direct_app_access(tmp_path):
@@ -143,7 +143,7 @@ def test_no_roster_is_recorded_and_stale_copy_removed(tmp_path):
     manifest = json.loads((d / "manifest.json").read_text())
     assert manifest["roster"] is None
     assert not (d / "roster.csv").exists() and "roster.csv" not in manifest["files"]
-    assert "- **HR roster:** not provided (AR-01 to AR-03 skipped)" in (d / "report.md").read_text()
+    assert "- **HR roster:** not provided (AR-01 to AR-03, AR-12 and AR-13 skipped)" in (d / "report.md").read_text()
 
 
 def test_fail_on_sets_exit_code(tmp_path):

@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 
-from .models import SIGN_IN_STATUSES, App, Group, Snapshot, User, parse_time
+from .models import (
+    CREDENTIAL_EVENTS,
+    SIGN_IN_STATUSES,
+    ActivityEvent,
+    ApiToken,
+    App,
+    Group,
+    Snapshot,
+    User,
+    parse_time,
+)
 from .okta import OktaClient, OktaError
+from .roster import RosterEntry, entry_for
 
 PAGE = {"limit": 200}
+# Per System Log query. A leaver with more activity than this is already the
+# finding; the cap stops one noisy account from stalling the whole review.
+MAX_EVENTS = 500
 
 
 def _warn(msg: str) -> None:
@@ -36,28 +50,141 @@ class _Optional:
         except OktaError as e:
             if missing_ok and e.status == 404:
                 return []
-            if e.status != 403:
-                raise
-            gap = (
-                f"Could not read {self.what}; {self.affects} may be incomplete. "
-                f"Needs the {self.scope} scope and an admin role allowed to view this data. ({e})"
-            )
-            _warn(gap)
-            self.gaps.append(gap)
-            self.allowed = False
+            self._refused(e)
             return None
+
+    def get_capped(self, path: str, params: dict, max_items: int = MAX_EVENTS) -> tuple[list, bool] | None:
+        if not self.allowed:
+            return None
+        try:
+            return self.client.get_capped(path, params, max_items)
+        except OktaError as e:
+            self._refused(e)
+            return None
+
+    def _refused(self, e: OktaError) -> None:
+        """Record the gap and stop calling. Anything but a 403 is a real error."""
+        if e.status != 403:
+            raise e
+        gap = (
+            f"Could not read {self.what}; {self.affects} may be incomplete. "
+            f"Needs the {self.scope} scope and an admin role allowed to view this data. ({e})"
+        )
+        _warn(gap)
+        self.gaps.append(gap)
+        self.allowed = False
 
 
 def _role_labels(assignments: list) -> list[str]:
     return sorted({a.get("label") or a.get("type", "unknown") for a in assignments})
 
 
-def collect(client: OktaClient) -> Snapshot:
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _collect_activity(
+    logs_api: _Optional,
+    users: list[User],
+    apps: list[App],
+    roster: dict[str, RosterEntry],
+    as_of: date,
+    lookback_days: int,
+    tz: tzinfo,
+    gaps: list[str],
+) -> tuple[list[ActivityEvent], datetime | None]:
+    """Read what the org's leavers, and the API clients they set up, have done.
+
+    Queried per leaver rather than across the org, so the volume follows the
+    number of people who left, not the size of the org.
+    """
+    horizon = datetime.combine(as_of - timedelta(days=lookback_days), time.min, tzinfo=timezone.utc)
+    events: list[ActivityEvent] = []
+    seen: set[str] = set()
+
+    def fetch(actor_id: str, since: datetime, kinds: tuple[str, ...] | None = None) -> tuple[list[ActivityEvent], bool]:
+        query = f'actor.id eq "{actor_id}"'
+        if kinds:
+            # Narrowed server-side. Asking for everything and filtering here
+            # spends the cap on events no check will read.
+            query += " and (" + " or ".join(f'eventType sw "{k}"' for k in kinds) + ")"
+        result = logs_api.get_capped("/api/v1/logs", {"since": _iso(since), "filter": query})
+        if result is None:
+            return [], False
+        raw, truncated = result
+        fresh = [ActivityEvent.from_okta(e) for e in raw if e.get("uuid") not in seen]
+        seen.update(e["uuid"] for e in raw if e.get("uuid"))
+        return fresh, truncated
+
+    def credentials(actor_id: str, who: str) -> None:
+        """Who set up which API client. Needs the whole window, because they
+        set it up while they still worked here."""
+        found, truncated = fetch(actor_id, horizon, CREDENTIAL_EVENTS)
+        events.extend(found)
+        if truncated:
+            gaps.append(
+                f"More than {MAX_EVENTS} credential events for {who} since {horizon.date()}; "
+                f"the API clients AR-12 lists for them may be incomplete."
+            )
+
+    def activity(actor_id: str, who: str, after: datetime) -> None:
+        """What they did after leaving. Only the window AR-13 reads, so the cap
+        is not spent on months of ordinary work before the end date."""
+        found, truncated = fetch(actor_id, max(after, horizon))
+        events.extend(found)
+        if truncated:
+            gaps.append(
+                f"More than {MAX_EVENTS} System Log events for {who} after {after.date()}. "
+                f"Okta returns the log oldest first, so AR-13 read the earliest {MAX_EVENTS}: "
+                f"its counts and last-seen date are a lower bound, and later activity is not shown."
+            )
+
+    leavers = [(u, e) for u in users if (e := entry_for(roster, u.email, u.login)) and e.is_gone(as_of)]
+    for user, entry in leavers:
+        credentials(user.id, user.login)
+        ends = entry.access_ends(tz)
+        if ends:
+            activity(user.id, user.login, ends)
+        if entry.end_date and entry.end_date < horizon.date():
+            gaps.append(
+                f"{user.login} left on {entry.end_date}, before the {lookback_days}-day System Log "
+                f"window opens on {horizon.date()}. Activity in between cannot be checked (AR-13)."
+            )
+
+    # An API client the leaver set up keeps working on its own credentials, so
+    # its own activity counts as theirs.
+    by_client = {a.client_id: a for a in apps if a.client_id and a.status == "ACTIVE"}
+    owned: dict[str, datetime] = {}
+    for user, entry in leavers:
+        ends = entry.access_ends(tz)
+        if ends is None:
+            continue
+        for event in events:
+            if event.actor_id != user.id or not event.is_kind(CREDENTIAL_EVENTS):
+                continue
+            for target in event.targets:
+                if target.get("id") in by_client:
+                    owned[target["id"]] = min(owned.get(target["id"], ends), ends)
+    for client_id, after in sorted(owned.items()):
+        activity(client_id, by_client[client_id].label, after)
+
+    return events, horizon
+
+
+def collect(
+    client: OktaClient,
+    roster: dict[str, RosterEntry] | None = None,
+    as_of: date | None = None,
+    lookback_days: int = 90,
+    tz: tzinfo = timezone.utc,
+) -> Snapshot:
     collected_at = datetime.now(timezone.utc)
     gaps: list[str] = []
     factors_api = _Optional(client, "MFA factors", "okta.users.read", "AR-04", gaps)
     roles_api = _Optional(client, "admin role assignments", "okta.roles.read", "AR-10 and AR-11", gaps)
     grants_api = _Optional(client, "app API scope grants", "okta.appGrants.read", "AR-10", gaps)
+    tokens_api = _Optional(client, "Okta API tokens", "okta.apiTokens.read", "AR-12", gaps)
+    logs_api = _Optional(client, "System Log events", "okta.logs.read", "AR-12 and AR-13", gaps)
 
     # /users hides DEPROVISIONED users unless asked for them explicitly.
     raw_users = client.get_all("/api/v1/users", PAGE)
@@ -114,6 +241,7 @@ def collect(client: OktaClient) -> Snapshot:
                 granted_scopes=sorted({g["scopeId"] for g in grants if g.get("status", "ACTIVE") == "ACTIVE"}),
                 admin_roles=_role_labels(roles),
                 service_client=service_client,
+                client_id=client_id or "",
             )
         )
 
@@ -126,6 +254,26 @@ def collect(client: OktaClient) -> Snapshot:
         _warn(gap)
         gaps.append(gap)
 
+    raw_tokens = tokens_api.get("/api/v1/api-tokens") or []
+    api_tokens = [ApiToken.from_dict(t) for t in raw_tokens if t.get("userId")]
+
+    # Activity is only read for people the roster says have left, so without a
+    # roster there is nobody to ask about and activity_since stays None.
+    events: list[ActivityEvent] = []
+    activity_since = None
+    if roster is not None:
+        events, activity_since = _collect_activity(
+            logs_api, users, apps, roster, as_of or collected_at.date(), lookback_days, tz, gaps
+        )
+
     return Snapshot(
-        org_url=client.org_url, collected_at=collected_at, users=users, groups=groups, apps=apps, gaps=gaps
+        org_url=client.org_url,
+        collected_at=collected_at,
+        users=users,
+        groups=groups,
+        apps=apps,
+        gaps=gaps,
+        api_tokens=api_tokens,
+        events=events,
+        activity_since=activity_since,
     )

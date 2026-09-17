@@ -16,10 +16,13 @@ from .mail import EmailConfigError, EmailSettings, build_message, send
 from .models import Snapshot
 from .okta import OktaClient, OktaError
 from .report import write_report
-from .roster import load_roster
+from .roster import RosterError, load_roster
 
 REQUIRED_ENV = ["OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_KEY_ID", "OKTA_PRIVATE_KEY"]
-DEFAULT_SCOPES = "okta.users.read okta.groups.read okta.apps.read okta.appGrants.read okta.roles.read"
+DEFAULT_SCOPES = (
+    "okta.users.read okta.groups.read okta.apps.read okta.appGrants.read okta.roles.read "
+    "okta.logs.read okta.apiTokens.read"
+)
 
 
 def _client_from_env() -> OktaClient:
@@ -62,7 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as e:
         print(f"access-review: config {args.config}: {e}", file=sys.stderr)
         return 1
-    roster = load_roster(args.roster) if args.roster else None
+    try:
+        roster = load_roster(args.roster, config.timezone()) if args.roster else None
+    except (RosterError, OSError, KeyError) as e:
+        print(f"access-review: roster {args.roster}: {e}", file=sys.stderr)
+        return 1
     # Check notification settings before the (slow) collection, so mistakes fail fast.
     try:
         email = None if args.no_email else EmailSettings.from_env()
@@ -81,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         from .collect import collect
 
         try:
-            snapshot = collect(_client_from_env())
+            snapshot = collect(_client_from_env(), roster, args.as_of,
+                               config.activity_lookback_days, config.timezone())
         except OktaError as e:
             print(f"access-review: {e}", file=sys.stderr)
             return 1

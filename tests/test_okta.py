@@ -1,5 +1,6 @@
 import base64
 import hashlib
+from datetime import date, datetime, timezone
 
 import jwt
 import pytest
@@ -238,3 +239,158 @@ def test_collect_marks_roles_unknown_and_skips_grants_when_forbidden(keypair, ca
 def test_no_gap_when_review_app_is_visible(keypair):
     session = FakeSession({"/api/v1/apps": [{"id": "client123", "label": "Access Review"}]})
     assert collect(client(session, keypair)).gaps == []
+
+
+def test_get_capped_stops_at_the_limit(keypair):
+    session = FakeSession({
+        "/api/v1/logs": FakeResponse([{"n": 1}, {"n": 2}], next_url=f"{ORG}/api/v1/logs/page2"),
+        "/api/v1/logs/page2": [{"n": 3}, {"n": 4}],
+    }, token_type="Bearer")
+
+    items, truncated = client(session, keypair).get_capped("/api/v1/logs", {"since": "x"}, max_items=3)
+
+    assert items == [{"n": 1}, {"n": 2}, {"n": 3}]
+    assert truncated is True
+
+
+def test_get_capped_treats_an_empty_page_as_the_end(keypair):
+    """The System Log always offers a next link, for polling. Only an empty page
+    means there is no more data, so get_all would never finish."""
+    session = FakeSession({
+        "/api/v1/logs": FakeResponse([{"n": 1}], next_url=f"{ORG}/api/v1/logs/page2"),
+        "/api/v1/logs/page2": FakeResponse([], next_url=f"{ORG}/api/v1/logs/page3"),
+    }, token_type="Bearer")
+
+    items, truncated = client(session, keypair).get_capped("/api/v1/logs", {"since": "x"}, max_items=500)
+
+    assert items == [{"n": 1}]
+    assert truncated is False
+
+
+def _log(event_type, published, actor_id, targets=(), uuid=None):
+    return {
+        "uuid": uuid or f"{actor_id}-{event_type}-{published}",
+        "published": published, "eventType": event_type,
+        "actor": {"id": actor_id, "type": "User"}, "outcome": {"result": "SUCCESS"},
+        "target": [{"id": t, "type": "AppInstance", "displayName": t} for t in targets],
+    }
+
+
+def _leaver_org(routes=None):
+    session = FakeSession({
+        "/api/v1/users": [_user("u1", "ACTIVE", email="gone@x.test"), _user("u2", "ACTIVE", email="here@x.test")],
+        "/api/v1/apps": [{
+            "id": "a1", "label": "Bot", "status": "ACTIVE",
+            "credentials": {"oauthClient": {"client_id": "0oaBOT"}},
+            "settings": {"oauthClient": {"grant_types": ["client_credentials"]}},
+        }],
+        "/api/v1/api-tokens": [{"id": "t1", "name": "ci-deploy", "userId": "u1"}],
+        **(routes or {}),
+    }, token_type="Bearer")
+    return session
+
+
+def _roster(end_date="2026-08-01"):
+    from access_review.roster import RosterEntry, _parse_end
+    ends, ends_at = _parse_end(end_date or "", timezone.utc, "gone@x.test")
+    return {"gone@x.test": RosterEntry("gone@x.test", "Gone", "employee", "terminated",
+                                       ends, "", end_at=ends_at)}
+
+
+def test_activity_is_read_only_for_leavers(keypair):
+    session = _leaver_org({"/api/v1/logs": [_log("user.session.start", "2026-09-01T10:00:00.000Z", "u1")]})
+
+    snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
+
+    assert [e.event_type for e in snap.events] == ["user.session.start"]
+    assert snap.api_tokens[0].name == "ci-deploy"
+    assert snap.activity_since == datetime(2026, 6, 17, tzinfo=timezone.utc)
+    # Two queries, both for the leaver only. The person who still works here is
+    # never queried. Credentials are narrowed server-side and read the whole
+    # window; activity reads only what happened after they left.
+    sent = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert all('actor.id eq "u1"' in p["filter"] for p in sent)
+    credentials, activity = sent
+    assert 'eventType sw "app.oauth2.credentials.lifecycle."' in credentials["filter"]
+    assert credentials["since"] == "2026-06-17T00:00:00Z"
+    assert "eventType" not in activity["filter"]
+    assert activity["since"] == "2026-08-01T23:59:59.999999Z"
+
+
+def test_no_roster_means_no_activity_queries(keypair):
+    session = _leaver_org()
+
+    snap = collect(client(session, keypair))
+
+    assert snap.events == []
+    assert snap.activity_since is None
+    assert not any("/logs" in url for url, _ in session.gets)
+
+
+def test_a_client_the_leaver_set_up_is_queried_too(keypair):
+    """The API client keeps working on its own credentials, so what it does counts."""
+    session = _leaver_org()
+    session.routes["/api/v1/logs"] = [
+        _log("app.oauth2.credentials.lifecycle.create", "2026-07-02T10:00:00.000Z", "u1", targets=["0oaBOT"]),
+        _log("app.oauth2.token.grant.access_token", "2026-09-01T10:00:00.000Z", "0oaBOT", uuid="grant-1"),
+    ]
+
+    snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
+
+    actors = [p["filter"].split('"')[1] for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert actors == ["u1", "u1", "0oaBOT"]
+    # Every query returns the same rows; events are deduplicated by uuid.
+    assert len(snap.events) == 2
+
+
+def test_a_termination_older_than_the_window_is_reported_as_a_gap(keypair):
+    session = _leaver_org({"/api/v1/logs": []})
+
+    snap = collect(client(session, keypair), _roster("2026-01-05"), date(2026, 9, 15))
+
+    assert any("before the 90-day System Log window" in g for g in snap.gaps)
+
+
+def test_truncated_activity_says_the_counts_are_a_lower_bound(keypair):
+    """Okta returns the log oldest first, so a truncated read drops the most
+    recent activity -- exactly what AR-13 is looking for. Say so."""
+    events = [_log("user.session.start", "2026-09-01T10:00:00.000Z", "u1", uuid=f"e{i}") for i in range(600)]
+    session = _leaver_org({"/api/v1/logs": events})
+
+    snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
+
+    assert len(snap.events) == 500
+    [gap] = [g for g in snap.gaps if "lower bound" in g]
+    assert "later activity is not shown" in gap
+
+
+def test_an_hr_timestamp_narrows_the_activity_query(keypair):
+    session = _leaver_org({"/api/v1/logs": []})
+
+    collect(client(session, keypair), _roster("2026-08-01T14:05:00+00:00"), date(2026, 9, 15))
+
+    _, activity = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert activity["since"] == "2026-08-01T14:05:00Z"
+
+
+def test_a_leaver_with_no_end_date_is_still_checked_for_credentials(keypair):
+    """AR-13 has no anchor without an end date, but AR-12 does not need one."""
+    session = _leaver_org({"/api/v1/logs": []})
+
+    collect(client(session, keypair), _roster(None), date(2026, 9, 15))
+
+    sent = [p for url, p in session.gets if url.endswith("/api/v1/logs")]
+    assert len(sent) == 1
+    assert "eventType sw" in sent[0]["filter"]
+
+
+def test_review_still_runs_when_logs_and_tokens_are_forbidden(keypair, capsys):
+    forbidden = FakeResponse({"errorSummary": "forbidden"}, status=403)
+    session = _leaver_org({"/api/v1/logs": forbidden, "/api/v1/api-tokens": forbidden})
+
+    snap = collect(client(session, keypair), _roster(), date(2026, 9, 15))
+
+    assert snap.events == [] and snap.api_tokens == []
+    gaps = " ".join(snap.gaps)
+    assert "okta.apiTokens.read" in gaps and "okta.logs.read" in gaps
+    assert "AR-12 and AR-13" in gaps

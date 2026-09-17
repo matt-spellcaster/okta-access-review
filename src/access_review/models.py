@@ -16,6 +16,21 @@ SIGN_IN_STATUSES = {"ACTIVE", "RECOVERY", "PASSWORD_EXPIRED", "LOCKED_OUT"}
 # Statuses where sign-in is blocked but the account and its access remain.
 DISABLED_STATUSES = {"SUSPENDED", "DEPROVISIONED"}
 
+# System Log event types, grouped by what each one tells a review.
+# Someone signed in, or used a session.
+SIGN_IN_EVENTS = (
+    "user.authentication.sso", "user.session.start",
+    "user.authentication.verify", "user.session.access_admin_app",
+)
+# A credential was exchanged for access: an API client acting, or an app token.
+TOKEN_EVENTS = ("app.oauth2.token.grant", "app.oauth2.authorize.code")
+# A client's credentials were created, rotated or read. These say who set an
+# API client up, which is the only record Okta keeps of who owns one.
+CREDENTIAL_EVENTS = (
+    "app.oauth2.client.lifecycle.create", "app.oauth2.credentials.lifecycle.",
+    "app.oauth2.client.read_client_secret",
+)
+
 
 def parse_time(value: str | None) -> datetime | None:
     if not value:
@@ -114,6 +129,8 @@ class App:
     # True for OAuth clients that act on their own authority (client_credentials),
     # as opposed to apps that act for a signed-in user.
     service_client: bool = False
+    # The OAuth client_id, which is what System Log events name as the actor.
+    client_id: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> App:
@@ -127,6 +144,7 @@ class App:
             granted_scopes=list(d.get("grantedScopes", [])),
             admin_roles=list(d.get("adminRoles", [])),
             service_client=d.get("serviceClient", False),
+            client_id=d.get("clientId", ""),
         )
 
     def to_dict(self) -> dict:
@@ -140,6 +158,102 @@ class App:
             "grantedScopes": sorted(self.granted_scopes),
             "adminRoles": sorted(self.admin_roles),
             "serviceClient": self.service_client,
+            "clientId": self.client_id,
+        }
+
+
+@dataclass
+class ApiToken:
+    """An Okta API token (SSWS). It keeps working until it is revoked or
+    expires, whatever happens to the account of the user who owns it."""
+
+    id: str
+    name: str
+    user_id: str
+    created: datetime | None = None
+    last_updated: datetime | None = None
+    expires: datetime | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ApiToken:
+        return cls(
+            id=d["id"],
+            name=d.get("name", ""),
+            user_id=d["userId"],
+            created=parse_time(d.get("created")),
+            last_updated=parse_time(d.get("lastUpdated")),
+            expires=parse_time(d.get("expiresAt")),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "userId": self.user_id,
+            "created": format_time(self.created),
+            "lastUpdated": format_time(self.last_updated),
+            "expiresAt": format_time(self.expires),
+        }
+
+
+@dataclass
+class ActivityEvent:
+    """One System Log event, reduced to what the checks need."""
+
+    published: datetime | None
+    event_type: str
+    actor_id: str
+    actor_type: str = ""
+    outcome: str = ""
+    targets: list[dict] = field(default_factory=list)
+
+    def is_kind(self, kinds: tuple[str, ...]) -> bool:
+        """Match one of the groups above. Prefixes, because Okta subdivides:
+        app.oauth2.token.grant also appears as .access_token and .refresh_token."""
+        return self.event_type.startswith(kinds)
+
+    @classmethod
+    def from_okta(cls, raw: dict) -> ActivityEvent:
+        """Project a raw System Log event onto the few fields checks read.
+
+        This is an allowlist, not a filter, and it must stay one. Raw events
+        carry secrets and far more personal data than a review needs --
+        app.oauth2.credentials.lifecycle.create puts the new client secret in
+        target[].detailEntry -- and a snapshot is written to disk and shared as
+        evidence. Nothing outside the fields named here is ever copied.
+        """
+        actor = raw.get("actor") or {}
+        return cls(
+            published=parse_time(raw.get("published")),
+            event_type=raw.get("eventType", ""),
+            actor_id=actor.get("id", ""),
+            actor_type=actor.get("type", ""),
+            outcome=(raw.get("outcome") or {}).get("result", ""),
+            targets=[
+                {"id": t.get("id", ""), "type": t.get("type", ""), "label": t.get("displayName", "")}
+                for t in raw.get("target") or []
+            ],
+        )
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ActivityEvent:
+        return cls(
+            published=parse_time(d.get("published")),
+            event_type=d["eventType"],
+            actor_id=d.get("actorId", ""),
+            actor_type=d.get("actorType", ""),
+            outcome=d.get("outcome", ""),
+            targets=list(d.get("targets", [])),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "published": format_time(self.published),
+            "eventType": self.event_type,
+            "actorId": self.actor_id,
+            "actorType": self.actor_type,
+            "outcome": self.outcome,
+            "targets": self.targets,
         }
 
 
@@ -152,9 +266,22 @@ class Snapshot:
     apps: list[App]
     # Data the collector could not read, so the report can say what is incomplete.
     gaps: list[str] = field(default_factory=list)
+    api_tokens: list[ApiToken] = field(default_factory=list)
+    events: list[ActivityEvent] = field(default_factory=list)
+    # Oldest point the activity evidence covers. None means activity was not
+    # collected at all, which is not the same as "nothing happened".
+    activity_since: datetime | None = None
 
     def groups_for(self, user_id: str) -> list[Group]:
         return [g for g in self.groups if user_id in g.members]
+
+    def tokens_for(self, user_id: str) -> list[ApiToken]:
+        return [t for t in self.api_tokens if t.user_id == user_id]
+
+    def events_for_actor(self, actor_id: str) -> list[ActivityEvent]:
+        """Every collected event this ID performed, oldest first."""
+        matched = [e for e in self.events if e.actor_id == actor_id]
+        return sorted(matched, key=lambda e: (e.published is None, e.published))
 
     def apps_for(self, user_id: str) -> list[tuple[App, str]]:
         """Apps a user can reach, with how: 'direct' or 'group:<name>'."""
@@ -176,6 +303,9 @@ class Snapshot:
             groups=[Group.from_dict(g) for g in d["groups"]],
             apps=[App.from_dict(a) for a in d["apps"]],
             gaps=list(d.get("gaps", [])),
+            api_tokens=[ApiToken.from_dict(t) for t in d.get("api_tokens", [])],
+            events=[ActivityEvent.from_dict(e) for e in d.get("events", [])],
+            activity_since=parse_time(d.get("activity_since")),
         )
 
     def to_dict(self) -> dict:
@@ -186,4 +316,7 @@ class Snapshot:
             "groups": [g.to_dict() for g in self.groups],
             "apps": [a.to_dict() for a in self.apps],
             "gaps": self.gaps,
+            "api_tokens": [t.to_dict() for t in self.api_tokens],
+            "events": [e.to_dict() for e in self.events],
+            "activity_since": format_time(self.activity_since),
         }

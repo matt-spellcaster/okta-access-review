@@ -100,9 +100,10 @@ def demo_run(tmp_path):
     assert cli.main(DEMO_ARGS + ["--out", str(tmp_path), "--no-email"]) == 0
     [run_dir] = list(tmp_path.iterdir())
     snapshot = cli.Snapshot.from_dict(json.loads((run_dir / "snapshot.json").read_text()))
+    config = cli.Config.load(FIXTURES / "demo_config.json")
     findings, _ = cli.run_checks(
-        cli.ReviewContext(snapshot, cli.load_roster(FIXTURES / "demo_roster.csv"),
-                          cli.Config.load(FIXTURES / "demo_config.json"), cli.date(2026, 9, 15))
+        cli.ReviewContext(snapshot, cli.load_roster(FIXTURES / "demo_roster.csv", config.timezone()),
+                          config, cli.date(2026, 9, 15))
     )
     return run_dir, snapshot, findings
 
@@ -110,10 +111,10 @@ def demo_run(tmp_path):
 def test_message_has_summary_and_pdf_but_no_personal_data(demo_run):
     run_dir, snapshot, findings = demo_run
     msg = build_message(settings(), snapshot, findings, run_dir)
-    assert msg["Subject"] == "Okta access review (complete): 1 critical, acme-demo.okta.com"
+    assert msg["Subject"] == "Okta access review (complete): 5 critical, acme-demo.okta.com"
     assert msg["To"] == "ciso@acme.example, auditor@acme.example"
     body = msg.get_body(("plain",)).get_content()
-    assert "critical 1" in body and "total    12" in body
+    assert "critical 5" in body and "total    16" in body
     for user in snapshot.users:
         assert user.login not in body
         assert user.profile["lastName"] not in body
