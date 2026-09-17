@@ -1,0 +1,7 @@
+{
+  "inactive_days": 90,
+  "never_signed_in_grace_days": 14,
+  "employee_only_groups": ["Engineering", "Finance"],
+  "admin_groups": ["Okta Administrators"],
+  "service_accounts": ["svc-ci@acme.example"]
+}

@@ -1,0 +1,85 @@
+"""Command-line entry point."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+from .checks import SEVERITIES, Config, ReviewContext, run_checks
+from .models import Snapshot
+from .okta import OktaClient, OktaError
+from .report import write_report
+from .roster import load_roster
+
+REQUIRED_ENV = ["OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_KEY_ID", "OKTA_PRIVATE_KEY"]
+DEFAULT_SCOPES = "okta.users.read okta.groups.read okta.apps.read"
+
+
+def _client_from_env() -> OktaClient:
+    missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+    if missing:
+        sys.exit(f"access-review: missing environment variables: {', '.join(missing)} (use ./run.sh)")
+    scopes = os.environ.get("OKTA_SCOPES", DEFAULT_SCOPES).split()
+    writable = [s for s in scopes if not s.endswith(".read")]
+    if writable:
+        sys.exit(f"access-review: refusing to request non-read scopes: {', '.join(writable)}")
+    return OktaClient(
+        org_url=os.environ["OKTA_ORG_URL"],
+        client_id=os.environ["OKTA_CLIENT_ID"],
+        key_id=os.environ["OKTA_KEY_ID"],
+        private_key_pem=os.environ["OKTA_PRIVATE_KEY"],
+        scopes=scopes,
+        dpop=os.environ.get("OKTA_DPOP", "true").lower() != "false",
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="access-review", description=__doc__)
+    p.add_argument("--snapshot", type=Path, help="review a saved snapshot JSON instead of calling Okta")
+    p.add_argument("--roster", type=Path, help="HR roster CSV (enables AR-01..AR-03)")
+    p.add_argument("--config", type=Path, help="review config JSON")
+    p.add_argument("--out", type=Path, default=Path("reports"), help="output directory (default: reports)")
+    p.add_argument("--as-of", type=date.fromisoformat, help="review date, YYYY-MM-DD (default: today)")
+    p.add_argument(
+        "--fail-on", choices=SEVERITIES,
+        help="exit with status 2 if any finding is at this severity or worse",
+    )
+    args = p.parse_args(argv)
+
+    config = Config.load(args.config)
+    roster = load_roster(args.roster) if args.roster else None
+
+    if args.snapshot:
+        snapshot = Snapshot.from_dict(json.loads(args.snapshot.read_text()))
+    else:
+        from .collect import collect
+
+        try:
+            snapshot = collect(_client_from_env())
+        except OktaError as e:
+            print(f"access-review: {e}", file=sys.stderr)
+            return 1
+
+    as_of = args.as_of or date.today()
+    findings, skipped = run_checks(ReviewContext(snapshot, roster, config, as_of))
+    run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of)
+
+    for f in findings:
+        print(f"{f.severity:<8} {f.check_id}  {f.subject:<32} {f.detail}")
+    print(f"\n{len(findings)} findings. Report: {run_dir / 'report.md'}")
+    if skipped:
+        print(f"Skipped without a roster: {', '.join(skipped)}")
+
+    if args.fail_on:
+        limit = SEVERITIES.index(args.fail_on)
+        if any(SEVERITIES.index(f.severity) <= limit for f in findings):
+            return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
