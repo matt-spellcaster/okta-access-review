@@ -164,6 +164,10 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
         "- Reviewer: ____________________",
         "- Date: ____________________",
         "",
+        "Or record the sign-off in this folder, bound to its manifest.json:",
+        "`access-review attest <this folder> --decision approved --reviewer \"Your Name\"`. "
+        "It checks every file against manifest.json first.",
+        "",
     ]
     return "\n".join(lines)
 

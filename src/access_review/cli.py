@@ -45,7 +45,18 @@ def _client_from_env() -> OktaClient:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="access-review", description=__doc__)
+    argv = sys.argv[1:] if argv is None else argv
+    # The review itself takes no positional arguments, so a leading word can only be a subcommand.
+    if argv[:1] == ["attest"]:
+        from .attest import main as attest
+
+        return attest(argv[1:])
+
+    p = argparse.ArgumentParser(
+        prog="access-review", description=__doc__,
+        epilog="To sign off a finished review: access-review attest <report folder> --decision approved "
+               "--reviewer NAME (see access-review attest --help).",
+    )
     p.add_argument("--snapshot", type=Path, help="review a saved snapshot JSON instead of calling Okta")
     p.add_argument("--roster", type=Path, help="HR roster CSV (enables AR-01..AR-03)")
     p.add_argument("--config", type=Path, help="review config JSON")

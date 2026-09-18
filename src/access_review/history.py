@@ -73,7 +73,7 @@ def subject_key(subject: str) -> str:
     return subject.strip().casefold()
 
 
-def _sha256_file(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
         while chunk := f.read(1024 * 1024):
@@ -105,7 +105,7 @@ def _finding_keys(folder: Path, manifest: dict) -> tuple[set[tuple[str, str]] | 
         return None, "findings.csv is missing"
     if path.stat().st_size > MAX_FINDINGS_BYTES:
         return None, "findings.csv is too large to read"
-    if _sha256_file(path) != expected:
+    if sha256_file(path) != expected:
         return None, "findings.csv doesn't match its manifest.json"
     try:
         with path.open(newline="", encoding="utf-8") as f:
