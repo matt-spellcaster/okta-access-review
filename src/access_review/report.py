@@ -21,6 +21,18 @@ MATRIX_COLUMNS = [
     "login", "name", "status", "type", "department", "manager", "last_login",
     "mfa", "admin_roles", "groups", "apps", "decision", "reviewer", "reviewed_on", "notes",
 ]
+# Spelled out so that adding a Finding field can't change the published CSV by accident.
+FINDING_COLUMNS = ["check_id", "title", "severity", "controls", "subject", "detail", "remediation"]
+# Written after the manifest (or by it), so never hashed into it.
+UNHASHED = {"manifest.json", "attestations.json"}
+
+
+class ReportError(Exception):
+    pass
+
+
+def run_dir_name(snapshot: Snapshot) -> str:
+    return snapshot.collected_at.strftime("%Y%m%dT%H%M%SZ")
 
 
 def access_matrix(snapshot: Snapshot) -> list[dict]:
@@ -167,7 +179,7 @@ def write_report(
     as_of: date,
     roster_path: Path | None = None,
 ) -> Path:
-    run_dir = out_dir / snapshot.collected_at.strftime("%Y%m%dT%H%M%SZ")
+    run_dir = out_dir / run_dir_name(snapshot)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep the exact roster this review used, so the evidence shows what it was compared against.
@@ -180,7 +192,7 @@ def write_report(
 
     (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of, label))
     finding_rows = [{**asdict(f), "controls": "; ".join(f.controls)} for f in findings]
-    _write_csv(run_dir / "findings.csv", finding_rows, list(Finding.__dataclass_fields__))
+    _write_csv(run_dir / "findings.csv", finding_rows, FINDING_COLUMNS)
     matrix = access_matrix(snapshot)
     _write_csv(run_dir / "access_matrix.csv", matrix, MATRIX_COLUMNS)
     write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix,
@@ -202,7 +214,7 @@ def write_report(
         "files": {
             p.name: hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(run_dir.iterdir())
-            if p.name != "manifest.json"
+            if p.name not in UNHASHED and p.is_file() and not p.is_symlink()
         },
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
