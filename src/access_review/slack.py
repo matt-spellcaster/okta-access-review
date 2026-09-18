@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 import requests
 
 from .checks import SEVERITIES, Finding
+from .history import repeat_summary
 from .models import Snapshot
 
 ALLOWED_HOSTS = {"hooks.slack.com", "hooks.slack-gov.com"}
@@ -176,6 +177,8 @@ def build_payload(snapshot: Snapshot, findings: list[Finding], run_dir: Path, br
             lines.append(f"{SEVERITY_EMOJI[worst]}  `{check_id}`  {items[0].title}{count}")
         blocks.append({"type": "divider"})
         blocks.append({"type": "section", "text": _mrkdwn("*What needs attention*\n" + "\n".join(lines))})
+        if repeats := repeat_summary(findings):
+            blocks.append({"type": "context", "elements": [_mrkdwn(f":hourglass: {repeats}")]})
     else:
         blocks.append({"type": "section", "text": _mrkdwn(":tada: *No findings.* Nothing needs attention.")})
 

@@ -49,6 +49,7 @@ A JSON file. Every key is optional, and unknown keys are rejected.
 | `service_accounts` | `[]` | Logins expected to be missing from the HR roster (AR-03) |
 | `activity_lookback_days` | `90` | How far back to read the System Log (AR-12, AR-13); Okta keeps 90 days |
 | `org_timezone` | `"America/Chicago"` | Where the org is, for resolving an `end_date` with no time on it (AR-13) |
+| `history_reviews` | `12` | How many earlier reviews to read for findings history, below |
 | `branding` | none | PDF branding, below |
 
 Example: [`fixtures/demo_config.json`](../fixtures/demo_config.json).
@@ -118,5 +119,62 @@ can then see exactly which HR data a review was compared against.
 | `--fail-on SEVERITY` | Exit with status 2 if any finding is at that severity or worse |
 | `--no-email`, `--no-slack` | Skip a notification for one run |
 
-Exit codes: `0` ok, `1` configuration or Okta error, `2` `--fail-on` threshold reached, `3` report
-saved but a notification failed.
+Exit codes: `0` ok, `1` configuration or Okta error (or the report folder is already signed off),
+`2` `--fail-on` threshold reached, `3` report saved but a notification failed. A mistyped option
+also exits `2`, as with any command-line tool, so a job that alerts on `--fail-on` should also
+check that a report was written.
+
+## Findings history
+
+Each run reads the earlier review folders in the same `--out` folder and adds a **History** column
+to the report, PDF and `findings.csv`: "New", "3 reviews in a row, first seen 2026-03-15", or
+"Back again" for a finding that was clear at the last review but has been seen before. Email and
+Slack get a count only.
+
+- A review is a review date, not a run. Several runs with the same `--as-of` count once, and only
+  the newest is used.
+- A folder is only used after its `findings.csv` matches the hash in its own `manifest.json`. A
+  review of the same org that can't be verified ends the count there, so a count can come out too
+  low but never too high. The report says when this happened.
+- Folders for other orgs, symlinks and anything without a readable `manifest.json` are ignored and
+  listed under `history` in the new `manifest.json`, with the reviews that were read.
+- "First seen" is the earliest review still in the folder, within `history_reviews`. Deleting old
+  report folders shortens the history.
+- Findings are matched on check and subject, ignoring case. AR-10's subject is the app's label, so
+  renaming an app starts its history again, and two apps with the same label share one.
+
+History changes no severity and doesn't affect `--fail-on`. On a first run, or with a new `--out`,
+there's no History column.
+
+## Sign-off (`attest`)
+
+The PDF ends with a sign-off block for a printed or PDF signature. To record the sign-off in the
+report folder instead:
+
+```
+access-review attest reports/20260915T140000Z --decision approved --reviewer "Priya Shah"
+```
+
+This checks every file against `manifest.json`. Only if they all match does it append a record to
+`attestations.json` in that folder: reviewer, decision, optional `--note`, time, and the SHA-256 of
+`manifest.json`, so the sign-off can't be moved to a different report. Several people can sign
+off; each record includes the hash of the one before it.
+
+| Option | Meaning |
+|---|---|
+| `--decision` | `approved`, `approved-with-exceptions` or `rejected` |
+| `--reviewer` | Who is signing off. Free text, one line, up to 200 characters |
+| `--note` | Optional comment, one line, up to 1000 characters |
+
+Without `--decision`, `attest` only checks the folder and lists the sign-offs so far, which is how an
+auditor re-checks a folder. It reports a sign-off made against a different `manifest.json`, or
+one that was edited, removed or reordered.
+
+Exit codes: `0` verified (and signed), `1` not a readable review folder, `2` a file is missing or
+changed, a sign-off is stale or broken, or the options were wrong. Nothing is signed unless the
+exit code is `0`.
+
+Once a folder has `attestations.json`, a review won't overwrite it. Re-running a saved snapshot into
+the same `--out` exits `1`; use a different `--out` if you meant to redo the review.
+
+`attest` is a record, not a cryptographic signature; see [security.md](security.md#evidence-integrity-and-sign-off).

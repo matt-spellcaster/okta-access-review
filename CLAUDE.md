@@ -7,6 +7,7 @@ Read-only Okta user access review that produces SOC 2 / ISO 27001 audit evidence
 - Tests: `uv run pytest -q`
 - Demo (no Okta needed): `uv run access-review --snapshot fixtures/demo_snapshot.json --roster fixtures/demo_roster.csv --config fixtures/demo_config.json --as-of 2026-09-15`
 - Live: `./run.sh --roster roster/dev-org-roster.csv --config roster/dev-org-config.json` (needs `env` and 1Password)
+- Sign-off: `uv run access-review attest reports/<folder>` (verify only) or add `--decision approved --reviewer NAME`
 
 ## Rules
 
@@ -24,6 +25,12 @@ Read-only Okta user access review that produces SOC 2 / ISO 27001 audit evidence
 - After changing the PDF layout or demo fixtures, run `uv run python scripts/render_samples.py`
   and look at `docs/images/*.png` before committing. The README sample must only ever use fixture data.
 - Keep the snapshot format (`models.py`) the same for live and fixture data; checks only see `Snapshot`.
+- Findings history (`history.py`) and `attest` never write outside the one report folder, never
+  change a hashed file, and never send anything. History must never count a review it couldn't
+  verify against its manifest; when unsure, count lower.
+- `findings.csv` columns are fixed by `FINDING_COLUMNS` (`report.py`). A new `Finding` field changes
+  them only if you add it there and update `test_findings_csv_header_is_explicit`.
+- Never write anything at the top level of `--out`; tests and `render_samples.py` expect one folder per run.
 - Python 3.11+, dependencies pinned by `uv.lock` and `exclude-newer` in `pyproject.toml`.
 - CI (`.github/workflows/compliance.yml`): pin every action to a full commit SHA with a version
   comment, keep `permissions: {}` at the top with per-job grants, never interpolate `${{ }}` into

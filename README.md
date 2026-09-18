@@ -8,6 +8,8 @@ saves the results as evidence for SOC 2 (CC6.1–CC6.3) and ISO 27001:2022 (A.5.
   accounts, missing MFA, and API clients with write access.
 - Read-only scopes, Private Key JWT, and DPoP-bound tokens.
 - Output: a PDF with a sign-off page, CSVs, the raw data, and a manifest of SHA-256 hashes.
+- Shows how many reviews in a row each finding has been open, from earlier report folders it has
+  verified, and `access-review attest` records a sign-off tied to the report's manifest.
 - The report is marked incomplete if Okta withholds any data.
 - Optionally emails the PDF and posts a summary to Slack. Messages contain no personal data.
 
@@ -77,10 +79,11 @@ Each run writes a folder named after its collection time:
 |---|---|
 | `report.pdf` / `report.md` | Findings with fixes and control mapping, access by user, reviewer sign-off |
 | `access_matrix.csv` | Every user's access, with blank `decision` and `reviewer` columns to fill in |
-| `findings.csv` | Tracking remediation |
+| `findings.csv` | Tracking remediation, with how long each finding has been open |
 | `snapshot.json` | The exact Okta data the checks ran on |
 | `roster.csv` | A copy of the HR roster export the review compared against |
-| `manifest.json` | Config, roster name, row count and hash, completeness, and a SHA-256 hash of every file |
+| `manifest.json` | Config, roster name, row count and hash, completeness, the earlier reviews history was read from, and a SHA-256 hash of every file |
+| `attestations.json` | Added by `access-review attest <folder> --decision approved --reviewer NAME`: sign-offs tied to the manifest's hash ([details](docs/configuration.md#sign-off-attest)) |
 
 `--fail-on high` exits with status 2 when there's a high or critical finding, so a scheduled job or
 CI pipeline can alert on it.

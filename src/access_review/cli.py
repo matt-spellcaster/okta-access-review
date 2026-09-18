@@ -12,10 +12,11 @@ from pathlib import Path
 
 from . import slack
 from .checks import SEVERITIES, Config, ReviewContext, run_checks
+from .history import age_findings, label, load_history
 from .mail import EmailConfigError, EmailSettings, build_message, send
 from .models import Snapshot
 from .okta import OktaClient, OktaError
-from .report import write_report
+from .report import ReportError, run_dir_name, write_report
 from .roster import RosterError, load_roster
 
 REQUIRED_ENV = ["OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_KEY_ID", "OKTA_PRIVATE_KEY"]
@@ -44,7 +45,18 @@ def _client_from_env() -> OktaClient:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="access-review", description=__doc__)
+    argv = sys.argv[1:] if argv is None else argv
+    # The review itself takes no positional arguments, so a leading word can only be a subcommand.
+    if argv[:1] == ["attest"]:
+        from .attest import main as attest
+
+        return attest(argv[1:])
+
+    p = argparse.ArgumentParser(
+        prog="access-review", description=__doc__,
+        epilog="To sign off a finished review: access-review attest <report folder> --decision approved "
+               "--reviewer NAME (see access-review attest --help).",
+    )
     p.add_argument("--snapshot", type=Path, help="review a saved snapshot JSON instead of calling Okta")
     p.add_argument("--roster", type=Path, help="HR roster CSV (enables AR-01..AR-03)")
     p.add_argument("--config", type=Path, help="review config JSON")
@@ -97,10 +109,18 @@ def main(argv: list[str] | None = None) -> int:
     # Default to the (UTC) collection date so the review date matches the data.
     as_of = args.as_of or snapshot.collected_at.date()
     findings, skipped = run_checks(ReviewContext(snapshot, roster, config, as_of))
-    run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of, roster_path=args.roster)
+    history = load_history(args.out, run_dir_name(snapshot), snapshot.org_url, as_of, config.history_reviews)
+    age_findings(findings, history, as_of)
+    try:
+        run_dir = write_report(args.out, snapshot, findings, skipped, config, as_of,
+                               roster_path=args.roster, history=history)
+    except ReportError as e:
+        print(f"access-review: {e}", file=sys.stderr)
+        return 1
 
     for f in findings:
-        print(f"{f.severity:<8} {f.check_id}  {f.subject:<32} {f.detail}")
+        repeat = f"  [{label(f)}]" if f.reviews_open > 1 or f.reopened else ""
+        print(f"{f.severity:<8} {f.check_id}  {f.subject:<32} {f.detail}{repeat}")
     print(f"\n{len(findings)} findings. Report: {run_dir / 'report.md'}")
     if skipped:
         print(f"Skipped without a roster: {', '.join(skipped)}")

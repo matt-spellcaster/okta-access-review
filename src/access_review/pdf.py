@@ -17,6 +17,7 @@ from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Space
 
 from . import __version__
 from .checks import CHECKS, SEVERITIES, Finding
+from .history import label
 from .models import Snapshot
 
 SEVERITY_COLORS = {
@@ -169,6 +170,7 @@ def write_pdf(
     matrix: list[dict],
     branding: Branding | None = None,
     roster_label: str = "not provided",
+    history_note: str = "",
 ) -> Path:
     brand = branding or Branding()
     t = _Theme(brand)
@@ -226,11 +228,18 @@ def write_pdf(
     story.append(Paragraph("Findings", t.h2))
     if findings:
         titles = {c.id: c.title for c in CHECKS}
-        rows = [[t.p(h, t.cell_bold) for h in ("Severity", "Check", "Subject", "Detail")]]
+        headers = ("Severity", "Check", "Subject", "Detail") + (("History",) if history_note else ())
+        rows = [[t.p(h, t.cell_bold) for h in headers]]
         for f in findings:
-            rows.append([t.severity(f.severity), t.p(f"{f.check_id} {titles[f.check_id]}"), t.p(f.subject),
-                         t.p(f.detail)])
-        story.append(t.table(rows, [0.8 * inch, 2.2 * inch, 2.2 * inch, width - 5.2 * inch]))
+            row = [t.severity(f.severity), t.p(f"{f.check_id} {titles[f.check_id]}"), t.p(f.subject), t.p(f.detail)]
+            rows.append(row + [t.p(label(f))] if history_note else row)
+        if history_note:
+            story.append(t.p(history_note, t.muted))
+            story.append(Spacer(1, 4))
+            widths = [0.8 * inch, 2.0 * inch, 2.0 * inch, width - 6.4 * inch, 1.6 * inch]
+        else:
+            widths = [0.8 * inch, 2.2 * inch, 2.2 * inch, width - 5.2 * inch]
+        story.append(t.table(rows, widths))
     else:
         story.append(t.p("No findings.", t.body))
 

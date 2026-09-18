@@ -128,6 +128,19 @@ def test_message_has_summary_and_pdf_but_no_personal_data(demo_run):
     assert manifest["files"]["report.pdf"] in body
 
 
+def test_repeat_findings_line_is_counts_only(demo_run):
+    run_dir, snapshot, findings = demo_run
+    assert "Open since the last review" not in build_message(settings(), snapshot, findings, run_dir).get_body(
+        ("plain",)).get_content()  # no history, no line
+    for f in findings:
+        f.reviews_open, f.first_seen = 1, "2026-09-15"
+    findings[0].reviews_open, findings[0].first_seen = 3, "2026-03-15"
+    body = build_message(settings(), snapshot, findings, run_dir).get_body(("plain",)).get_content()
+    assert "Open since the last review: 1 of 16 (longest: 3 reviews in a row)" in body
+    for user in snapshot.users:
+        assert user.login not in body
+
+
 def test_incomplete_review_says_so(demo_run):
     run_dir, snapshot, findings = demo_run
     snapshot.gaps = ["Could not read admin role assignments"]

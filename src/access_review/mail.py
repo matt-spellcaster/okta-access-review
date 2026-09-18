@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .checks import SEVERITIES, Finding
+from .history import repeat_summary
 from .models import Snapshot
 
 
@@ -93,6 +94,8 @@ def build_message(
     ]
     lines += [f"  {s:<9}{counts.get(s, 0)}" for s in SEVERITIES]
     lines += [f"  {'total':<9}{len(findings)}", ""]
+    if repeats := repeat_summary(findings):
+        lines += [repeats, ""]
     if snapshot.gaps:
         lines += [f"This review has {len(snapshot.gaps)} data gap(s). See the report before relying on it.", ""]
     lines += [

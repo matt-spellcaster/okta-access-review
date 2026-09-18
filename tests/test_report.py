@@ -146,6 +146,23 @@ def test_no_roster_is_recorded_and_stale_copy_removed(tmp_path):
     assert "- **HR roster:** not provided (AR-01 to AR-03, AR-12 and AR-13 skipped)" in (d / "report.md").read_text()
 
 
+def test_findings_csv_header_is_explicit(tmp_path):
+    main(DEMO_ARGS + ["--out", str(tmp_path)])
+    with (run_dir(tmp_path) / "findings.csv").open(newline="") as f:
+        header = next(csv.reader(f))
+    assert header == [
+        "check_id", "title", "severity", "controls", "subject", "detail", "remediation",
+        "first_seen", "reviews_open", "reopened",
+    ]
+
+
+def test_manifest_ignores_subdirectories(tmp_path):
+    main(DEMO_ARGS + ["--out", str(tmp_path)])
+    (run_dir(tmp_path) / "scratch").mkdir()
+    assert main(DEMO_ARGS + ["--out", str(tmp_path)]) == 0
+    assert "scratch" not in json.loads((run_dir(tmp_path) / "manifest.json").read_text())["files"]
+
+
 def test_fail_on_sets_exit_code(tmp_path):
     assert main(DEMO_ARGS + ["--out", str(tmp_path), "--fail-on", "critical"]) == 2
 

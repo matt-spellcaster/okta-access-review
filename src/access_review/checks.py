@@ -49,6 +49,8 @@ class Config:
     activity_lookback_days: int = 90
     # Where the org is, for resolving an end_date with no time on it (AR-13).
     org_timezone: str = "America/Chicago"
+    # How many earlier reviews in the output folder to read for findings history.
+    history_reviews: int = 12
     # PDF look; see pdf.Branding. Empty means the plain layout.
     branding: dict = field(default_factory=dict)
 
@@ -62,6 +64,8 @@ class Config:
             raise ValueError(f"unknown config keys: {', '.join(sorted(unknown))}")
         config = cls(**data)
         config.timezone()  # fail fast on an unknown timezone
+        if type(config.history_reviews) is not int or config.history_reviews < 1:
+            raise ValueError(f"history_reviews must be a whole number of at least 1, not {config.history_reviews!r}")
         from .pdf import Branding  # late import: pdf imports this module
 
         Branding.from_config(config.branding)  # fail fast on bad colors or keys
@@ -83,6 +87,10 @@ class Finding:
     subject: str
     detail: str
     remediation: str
+    # Set by history.age_findings from earlier reviews; 0 means there was no history to read.
+    first_seen: str = ""
+    reviews_open: int = 0
+    reopened: bool = False
 
 
 @dataclass

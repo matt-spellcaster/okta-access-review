@@ -82,6 +82,29 @@ that it can see its own app. If it can't, the app list is marked as filtered.
 - Webhook URLs, bot tokens and Slack's pre-signed upload URLs never appear in output or error
   messages. Tests check this, and no test can send real email or Slack messages.
 - The README samples use only the fictional Acme data, and a test keeps them in sync with the code.
+- `attest` stores the reviewer's name in `attestations.json` in the report folder, and nowhere
+  else: not in `manifest.json`, email or Slack. It sends nothing.
+
+## Evidence integrity and sign-off
+
+- **`manifest.json` makes changes detectable, not impossible.** Its hashes tie the files of one
+  run together, so a changed file, a file swapped in from another run, or a missing file shows up.
+  Nothing signs the manifest itself, so anyone who can edit the folder can change a file and
+  recompute its hash.
+- **`attest` is a record, not a cryptographic signature.** It ties a decision to the manifest's
+  SHA-256, so a sign-off can't be moved to a different report unnoticed, and it refuses to sign a
+  folder whose files don't match. But no key is involved, the reviewer name is whatever was typed,
+  and `attestations.json` is an ordinary file in the same folder.
+- **The chain inside `attestations.json` catches a sign-off edited, removed or reordered in place.**
+  It can't catch the whole file being rewritten, because the chain lives in the file it protects.
+- **For non-repudiation, put the manifest's SHA-256 somewhere the reviewer doesn't control**: a
+  ticket, a write-once bucket, a signed git tag, or an e-signature over `manifest.json`.
+- **Findings history only reads other folders; it never changes them.** It counts a review only
+  after checking its `findings.csv` against its own manifest, stops counting at a review it can't
+  verify, and records in `manifest.json` which folders it read and which it skipped. It can't tell
+  that a whole folder was deleted, so a count can only be as long as the folders kept.
+- Both are read-only as far as Okta is concerned: they run on files already on disk and make no API
+  calls.
 
 ## Supply chain
 
@@ -98,3 +121,7 @@ that it can see its own app. If it can't, the app list is marked as filtered.
 - Okta keeps 90 days of System Log data, so AR-13 cannot see activity after a termination older
   than that. The review reports it as a gap rather than as a clean result, but the answer for an
   older leaver is still "unknown", not "nothing happened".
+- `attestations.json` shows who says they signed off, not proof that they did. Keep the manifest
+  hash somewhere outside the report folder if an auditor needs more than that.
+- Findings history is only as long as the report folders kept in `--out`, and it matches AR-10
+  findings by app label, so renaming an app starts its history again.
