@@ -101,6 +101,19 @@ def test_payload_has_summary_and_no_personal_data(demo_run):
         assert app.label not in text
 
 
+def test_repeat_findings_line_is_counts_only(demo_run):
+    run_dir, snapshot, findings = demo_run
+    assert "Open since the last review" not in all_text(slack.build_payload(snapshot, findings, run_dir))
+    for f in findings:
+        f.reviews_open, f.first_seen = 2, "2026-06-15"
+    text = all_text(slack.build_payload(snapshot, findings, run_dir))
+    assert ":hourglass: Open since the last review: 16 of 16 (longest: 2 reviews in a row)" in text
+    for user in snapshot.users:
+        assert user.login not in text
+    for app in snapshot.apps:
+        assert app.label not in text
+
+
 def test_attention_list_groups_by_check_worst_first(demo_run):
     run_dir, snapshot, findings = demo_run
     [attention] = [b for b in blocks_of(slack.build_payload(snapshot, findings, run_dir))

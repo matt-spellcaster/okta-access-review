@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .checks import CHECKS, SEVERITIES, Config, Finding
+from .history import History, label
 from .models import SIGN_IN_STATUSES, Snapshot
 from .pdf import Branding, write_pdf
 
@@ -22,7 +23,10 @@ MATRIX_COLUMNS = [
     "mfa", "admin_roles", "groups", "apps", "decision", "reviewer", "reviewed_on", "notes",
 ]
 # Spelled out so that adding a Finding field can't change the published CSV by accident.
-FINDING_COLUMNS = ["check_id", "title", "severity", "controls", "subject", "detail", "remediation"]
+FINDING_COLUMNS = [
+    "check_id", "title", "severity", "controls", "subject", "detail", "remediation",
+    "first_seen", "reviews_open", "reopened",
+]
 # Written after the manifest (or by it), so never hashed into it.
 UNHASHED = {"manifest.json", "attestations.json"}
 
@@ -67,8 +71,14 @@ def access_matrix(snapshot: Snapshot) -> list[dict]:
     return rows
 
 
+HISTORY_NOTE = (
+    "History counts reviews in this output folder that were verified against their own manifest.json. "
+    "A finding may be older than the oldest review kept here."
+)
+
+
 def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[str], as_of: date,
-                    roster: str = "not provided") -> str:
+                    roster: str = "not provided", history: History | None = None) -> str:
     counts = Counter(f.severity for f in findings)
     live = sum(1 for u in snapshot.users if u.status != "DEPROVISIONED")
     activity = (
@@ -100,6 +110,16 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
         lines += [f"- {g}" for g in snapshot.gaps]
 
     lines += ["", "## Findings", ""]
+    aged = bool(history and history.reviews)
+    if history is not None:
+        if aged:
+            lines += [HISTORY_NOTE, ""]
+        else:
+            lines += ["No earlier review of this org was found in this output folder, so findings have no history yet.",
+                      ""]
+        lines += [f"- {c}" for c in history.caveats()]
+        if history.caveats():
+            lines.append("")
     if not findings:
         lines.append("No findings.")
     by_check: dict[str, list[Finding]] = {}
@@ -115,10 +135,13 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
             f"**Controls:** {', '.join(check.controls)}  ",
             f"**Fix:** {check.remediation}",
             "",
-            "| Severity | Subject | Detail |",
-            "|---|---|---|",
         ]
-        lines += [f"| {f.severity} | `{f.subject}` | {f.detail} |" for f in items]
+        if aged:
+            lines += ["| Severity | Subject | Detail | History |", "|---|---|---|---|"]
+            lines += [f"| {f.severity} | `{f.subject}` | {f.detail} | {label(f)} |" for f in items]
+        else:
+            lines += ["| Severity | Subject | Detail |", "|---|---|---|"]
+            lines += [f"| {f.severity} | `{f.subject}` | {f.detail} |" for f in items]
         lines.append("")
 
     lines += [
@@ -143,6 +166,15 @@ def render_markdown(snapshot: Snapshot, findings: list[Finding], skipped: list[s
         "",
     ]
     return "\n".join(lines)
+
+
+def _finding_row(f: Finding) -> dict:
+    row = {**asdict(f), "controls": "; ".join(f.controls)}
+    if f.reviews_open == 0:  # no history was read: leave the columns blank rather than print a misleading 0
+        row.update(first_seen="", reviews_open="", reopened="")
+    else:
+        row["reopened"] = "yes" if f.reopened else "no"
+    return row
 
 
 def _write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
@@ -178,8 +210,14 @@ def write_report(
     config: Config,
     as_of: date,
     roster_path: Path | None = None,
+    history: History | None = None,
 ) -> Path:
     run_dir = out_dir / run_dir_name(snapshot)
+    if (run_dir / "attestations.json").exists():
+        raise ReportError(
+            f"{run_dir} is signed off (attestations.json); refusing to overwrite it. "
+            "Use a different --out, or move the folder, if you meant to redo this review."
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Keep the exact roster this review used, so the evidence shows what it was compared against.
@@ -188,15 +226,16 @@ def write_report(
         shutil.copyfile(roster_path, run_dir / "roster.csv")
     else:
         (run_dir / "roster.csv").unlink(missing_ok=True)  # don't hash a stale copy from an earlier run
-    label = roster_label(roster)
+    roster_text = roster_label(roster)
 
-    (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of, label))
-    finding_rows = [{**asdict(f), "controls": "; ".join(f.controls)} for f in findings]
+    (run_dir / "report.md").write_text(render_markdown(snapshot, findings, skipped, as_of, roster_text, history))
+    finding_rows = [_finding_row(f) for f in findings]
     _write_csv(run_dir / "findings.csv", finding_rows, FINDING_COLUMNS)
     matrix = access_matrix(snapshot)
     _write_csv(run_dir / "access_matrix.csv", matrix, MATRIX_COLUMNS)
     write_pdf(run_dir / "report.pdf", snapshot, findings, skipped, as_of, matrix,
-              Branding.from_config(config.branding), roster_label=label)
+              Branding.from_config(config.branding), roster_label=roster_text,
+              history_note=HISTORY_NOTE if history and history.reviews else "")
     (run_dir / "snapshot.json").write_text(json.dumps(snapshot.to_dict(), indent=2) + "\n")
 
     manifest = {
@@ -211,6 +250,7 @@ def write_report(
         "activity_since": snapshot.to_dict()["activity_since"],
         "complete": not snapshot.gaps,
         "data_gaps": snapshot.gaps,
+        "history": history.manifest_block() if history is not None else None,
         "files": {
             p.name: hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(run_dir.iterdir())

@@ -150,7 +150,10 @@ def test_findings_csv_header_is_explicit(tmp_path):
     main(DEMO_ARGS + ["--out", str(tmp_path)])
     with (run_dir(tmp_path) / "findings.csv").open(newline="") as f:
         header = next(csv.reader(f))
-    assert header == ["check_id", "title", "severity", "controls", "subject", "detail", "remediation"]
+    assert header == [
+        "check_id", "title", "severity", "controls", "subject", "detail", "remediation",
+        "first_seen", "reviews_open", "reopened",
+    ]
 
 
 def test_manifest_ignores_subdirectories(tmp_path):
