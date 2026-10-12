@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.32",
-    "pyjwt[crypto]>=2.9",
+    "pyjwt[crypto]>=2.15.0",
     "reportlab>=5.0.1",
 ]
 
@@ -15,7 +15,7 @@ access-review = "access_review.cli:main"
 
 [dependency-groups]
 dev = [
-    "pypdf>=6.18.1",
+    "pypdf>=6.19.0",
     "pypdfium2>=5.13.0",
     "pytest>=8",
 ]
@@ -30,7 +30,7 @@ packages = ["src/access_review"]
 [tool.uv]
 # Ignore packages published after this date so a new upstream release can't
 # change what gets installed without a reviewed commit. Bump deliberately.
-exclude-newer = "2026-09-16T00:00:00Z"
+exclude-newer = "2026-09-24T00:00:00Z"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
